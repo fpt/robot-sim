@@ -1,0 +1,31 @@
+# Sensor models.  memo.txt sections 15, 16, 17, 18.
+body_imu:
+  accel_noise_std: 0.05      # m/s^2
+  accel_bias_std: 0.02
+  gyro_noise_std: 0.004      # rad/s
+  gyro_bias_std: 0.002
+  rate: 500                  # Hz
+
+foot_imu:
+  accel_noise_std: 0.15      # m/s^2, feet see impacts, cheap parts
+  accel_bias_std: 0.05
+  gyro_noise_std: 0.01
+  gyro_bias_std: 0.004
+  rate: 500
+
+foot_force:                  # FSR model, section 18
+  f_max: 9.8                 # N, saturation
+  noise_std: 0.05            # N
+  zero_drift_std: 0.03       # N, per-sensor offset drawn once per run
+  gain_spread: 0.05          # +-5% per-sensor gain mismatch
+  contact_threshold: 0.30    # N, below this the controller calls it "no contact"
+  quantization: 0.02         # N (ADC LSB, 0 disables)
+  hysteresis: 0.0            # N, phase 1 keeps this off
+  lowpass_hz: 60.0
+
+battery:
+  noise_std: 0.01            # V
+
+observer:                    # section 15, complementary filter
+  tau_complementary: 0.5     # s, gyro/accel blend time constant
+  accel_trust_window: 2.0    # m/s^2, |a|-g outside this -> trust gyro only

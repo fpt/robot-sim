@@ -1,0 +1,21 @@
+# runs
+logs/*
+!logs/.gitkeep
+
+# generated assets (reflex_quad/asset_builder.py regenerates the URDF; the USD
+# is produced by Isaac Lab's converter and is machine-specific)
+assets/usd/
+assets/*.usd
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# editors / os
+.DS_Store
+.idea/
+.vscode/

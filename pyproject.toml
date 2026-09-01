@@ -1,0 +1,46 @@
+[project]
+name = "reflex-quad"
+version = "0.1.0"
+description = "Proprioception-free quadruped experiments on Isaac Sim / Isaac Lab"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.24",
+    "pyyaml>=6.0",
+    "matplotlib>=3.7",
+]
+
+[project.optional-dependencies]
+# Isaac Sim, Isaac Lab and CUDA torch are NOT listed here on purpose: they are
+# installed into their own environment by runbooks/RB-01 and RB-02, from
+# NVIDIA's index.  Pinning them here would fight that install.
+dev = [
+    "pytest>=7.4",
+]
+
+[project.scripts]
+reflex-quad = "reflex_quad.cli:main"
+reflex-quad-eval = "eval.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["reflex_quad", "reflex_quad.backends", "eval"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# Paired matplotlib setters read better on one line than as a wall of one-call
+# statements; the alternative is twice the lines for no more information.
+"eval/plots.py" = ["E702"]

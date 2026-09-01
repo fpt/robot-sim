@@ -1,0 +1,42 @@
+# Geometry and inertia of the 2-link x 4-leg quadruped.  memo.txt sections 10, 11.
+# SI units everywhere (m, kg, rad, s, N, A, V).
+body:
+  length: 0.300          # x
+  width:  0.180          # y
+  height: 0.060          # z
+  mass:   1.0
+  # Inertia of a solid box, used by the mock backend and as the USD default.
+  # Ixx = m/12*(w^2+h^2), Iyy = m/12*(l^2+h^2), Izz = m/12*(l^2+w^2)
+  inertia_xx: 0.00300
+  inertia_yy: 0.00780
+  inertia_zz: 0.01020
+
+leg:
+  upper_length: 0.120
+  lower_length: 0.120
+  upper_mass: 0.06
+  lower_mass: 0.04
+  foot_radius: 0.010
+  # Hip joint = rotation about body y axis (sagittal plane only, memo section 11).
+  # Zero angle = link pointing straight down.  Positive = foot swings +x (forward).
+  # +-80 deg.  At the nominal 180 mm stance the symmetric leg already sits at
+  # -41 deg of hip, so a +-60 deg limit would leave only ~19 deg of stride
+  # margin and would clip an ordinary crouch-and-reach pose.  A 300 deg-range
+  # hobby servo gives this easily.
+  hip_limit:  [-1.40, 1.40]
+  knee_limit: [ 0.00, 2.10]     # knee only bends one way, 0..120 deg
+
+# Leg order is fixed everywhere in this project: FL, FR, RL, RR (index 0..3).
+# Joint order is fixed everywhere: leg*2 + {0:hip, 1:knee}  ->  u[0..7].
+legs:
+  - {name: FL, hip_x:  0.150, hip_y:  0.090}
+  - {name: FR, hip_x:  0.150, hip_y: -0.090}
+  - {name: RL, hip_x: -0.150, hip_y:  0.090}
+  - {name: RR, hip_x: -0.150, hip_y: -0.090}
+
+stance:
+  # Nominal foot distance below the hip.  Max reach is 0.240 m, so this is a
+  # comfortably bent leg that can extend and retract in both directions.
+  height: 0.180
+  min_height: 0.120
+  max_height: 0.225

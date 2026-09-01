@@ -1,0 +1,217 @@
+# Pass/fail gates for the evaluation framework.
+# memo.txt sections 24 (exp01), 31 (exp03), 45-48 (phase gates).
+#
+# Every entry is  <check_id>: {metric, op, value, why}
+# op is one of: lt, le, gt, ge, eq, is_true, is_false
+# `metric` is a key produced by eval/metrics.py (see docs/METRICS.md).
+# A run PASSES a gate only if every check in it passes.
+
+common:
+  no_nan:
+    metric: nan_count
+    op: eq
+    value: 0
+    why: "section 24: NaN is an immediate fail"
+  no_divergence:
+    metric: diverged
+    op: is_false
+    why: "section 24: no state blow-up (|roll|,|pitch| < 60 deg, |z| < 1 m, |I| < 20 A)"
+  no_fall:
+    metric: fell_over
+    op: is_false
+    why: "section 24: robot must not tip over (max |roll| or |pitch| > 45 deg)"
+  contact_sane:
+    metric: total_force_mean_N
+    op: ge
+    value: 5.0
+    why: "section 24: four feet should carry roughly the body weight (~9.8 N)"
+  contact_sane_upper:
+    metric: total_force_mean_N
+    op: le
+    value: 30.0
+    why: "section 24: contact force must not be absurd"
+  current_sane:
+    metric: current_max_A
+    op: le
+    value: 5.0
+    why: "cheap servos stall around 2 A; >5 A means the model is wrong"
+
+experiments:
+  "01_stand":
+    inherit: common
+    settled:
+      metric: settling_time_s
+      op: le
+      value: 3.0
+      why: "must reach a quiet standing state within 3 s"
+    quiet_roll:
+      metric: final_abs_roll_deg
+      op: le
+      value: 2.0
+      why: "flat ground, symmetric robot: residual tilt is numerical only"
+    quiet_pitch:
+      metric: final_abs_pitch_deg
+      op: le
+      value: 2.0
+      why: "as above"
+    even_load:
+      metric: final_force_cv
+      op: le
+      value: 0.15
+      why: "flat ground: the four feet should share the load"
+
+  "02_uneven_ground":
+    inherit: common
+    level_roll:
+      metric: final_abs_roll_deg
+      op: le
+      value: 3.0
+      why: "section 31: roll -> approximately 0 despite the unseen 20 mm step"
+    level_pitch:
+      metric: final_abs_pitch_deg
+      op: le
+      value: 3.0
+      why: "section 31: pitch -> approximately 0"
+    improved_roll:
+      metric: roll_improvement_ratio
+      op: ge
+      value: 2.0
+      why: "final tilt at least 2x better than the open-loop transient peak"
+    load_not_extreme:
+      metric: final_force_cv
+      op: le
+      value: 0.45
+      why: "section 31: foot force distribution must not become extreme"
+    no_foot_lost:
+      metric: min_foot_force_final_N
+      op: ge
+      value: 0.30
+      why: "all four feet still in contact at the end"
+
+  "03_dither":
+    inherit: common
+    j_decreases:
+      metric: J_trend_p_value
+      op: le
+      value: 0.05
+      why: "section 31: J(t) must decrease in a statistically meaningful way"
+    j_improvement:
+      metric: J_improvement_ratio
+      op: ge
+      value: 1.5
+      why: "last 20% of the run must beat the first 20% by 1.5x"
+    gradient_consistent:
+      metric: gradient_sign_consistency
+      op: ge
+      value: 0.70
+      why: "during the search phase the +/- probe must give a repeatable sign, or
+        it is measuring noise.  Judged over the first 60% of updates only: an
+        already-converged dither alternates on purpose."
+    level_roll:
+      metric: final_abs_roll_deg
+      op: le
+      value: 3.0
+      why: "section 31"
+    level_pitch:
+      metric: final_abs_pitch_deg
+      op: le
+      value: 3.0
+      why: "section 31"
+
+  "03b_dither_all":
+    inherit: "03_dither"
+
+  "04_leg_unload":
+    inherit: common
+    unload_reached:
+      metric: sm_min_target_leg_force_N
+      op: le
+      value: 0.30
+      why: "section 32: F_FL -> 0 before the leg moves"
+    verified_by_imu:
+      metric: sm_motion_verified
+      op: is_true
+      why: "section 33: LEG_FREE requires foot-IMU motion, not the command"
+    cycle_completed:
+      metric: sm_returned_to_stand
+      op: is_true
+      why: "section 46: the whole unload/lift/lower/reload cycle closes"
+    posture_held:
+      metric: max_abs_tilt_during_lift_deg
+      op: le
+      value: 8.0
+      why: "the other three legs must keep the body under control"
+    reloaded:
+      metric: sm_final_target_leg_force_N
+      op: ge
+      value: 1.0
+      why: "the leg carries load again at the end"
+
+  "07_self_check":
+    inherit: "04_leg_unload"
+    all_four_legs:
+      metric: sm_cycles
+      op: ge
+      value: 4
+      why: "section 38: the self-check inspects every leg, not just one"
+    not_aborted:
+      metric: sm_aborted
+      op: is_false
+      why: "a state timeout during self-inspection means the routine is not usable"
+
+  "05_fault":
+    inherit: common
+    detected:
+      metric: fault_detected
+      op: is_true
+      why: "section 47: the residual monitor must raise a flag"
+    detected_in_time:
+      metric: fault_detection_latency_s
+      op: le
+      value: 15.0
+      why: >
+        Detection is only possible while the faulty joint is being driven, so the
+        bound is the probe revisit interval, not detector speed: an 8-joint sweep
+        at ~1.8 s per joint revisits one joint every ~14.4 s.  Measured latencies
+        are 0.9 s (foot IMU bias) and 1.4 s (stuck FSR), which need no probe at
+        all, and 7.2 s for the torque-loss case, which does.  Probing a single
+        suspect joint brings that under 2 s -- which is what a section 38
+        self-check would do, and the reason to build one.
+    no_false_alarm:
+      metric: fault_false_alarm_count
+      op: eq
+      value: 0
+      why: "no flag may be raised before the injection time"
+    classified:
+      metric: fault_class_correct
+      op: is_true
+      why: "section 36: mechanical-resistance vs drive-failure must be told apart"
+
+  "06_first_step":
+    inherit: "04_leg_unload"
+    moved_forward:
+      metric: sm_foot_forward_displacement_m
+      op: ge
+      value: 0.015
+      why: "section 39: the foot actually ends up ahead of where it started"
+
+# Phase gates aggregate several runs.  memo.txt sections 45-48.
+phases:
+  phase1:
+    title: "Blind levelling on unknown terrain (section 45)"
+    requires_runs: ["01_stand", "02_uneven_ground", "03_dither"]
+    extra:
+      isolation_clean:
+        metric: isolation_violations
+        op: eq
+        value: 0
+        why: "section 13/45: the controller never touched q, qdot or tau"
+  phase2:
+    title: "One leg, full unload/lift/verify/lower/reload cycle (section 46)"
+    requires_runs: ["04_leg_unload"]
+  phase3:
+    title: "Fault detection from command/current/IMU/force inconsistency (section 47)"
+    requires_runs: ["05_fault"]
+  phase4:
+    title: "Static crawl gait (section 48)"
+    requires_runs: ["06_first_step"]

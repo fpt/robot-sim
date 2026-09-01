@@ -1,0 +1,38 @@
+# Cheap hobby servo model.  memo.txt sections 19, 20, 21, 22.
+# Phases are additive; set `phase` to A..E to enable progressively more realism.
+phase: B
+
+pd:
+  kp: 8.0                # Nm/rad
+  kd: 0.15               # Nm*s/rad
+
+limits:                  # Phase B
+  tau_max: 1.6           # Nm  (~16 kgf.cm at the horn)
+  qd_max: 8.0            # rad/s (~0.13 s/60deg)
+
+nonideal:                # Phase C
+  deadband: 0.0035       # rad (~0.2 deg) command deadband
+  command_delay: 0.020   # s   transport delay of the position command
+
+friction:                # Phase D
+  coulomb: 0.02          # Nm
+  viscous: 0.004         # Nm*s/rad
+  backlash: 0.0052       # rad (~0.3 deg) total lash
+  stick_velocity: 0.2    # rad/s, smoothing width of the Coulomb term
+
+supply:                  # Phase E
+  nominal_voltage: 7.4   # V (2S LiPo)
+  voltage_sag_per_amp: 0.15   # V/A internal resistance of pack + wiring
+  torque_per_volt: 0.135      # tau_max scales with V/V_nom via this factor
+  temp_derate_per_K: 0.0      # not modelled in phase 1
+
+current:                 # section 21
+  i_idle: 0.06           # A per servo, powered but unloaded
+  k_tau: 0.90            # A/Nm
+  noise_std: 0.008       # A, white noise on the measurement
+  bias_std: 0.004        # A, per-servo fixed offset drawn once per run
+  quantization: 0.005    # A, ADC LSB (0 disables)
+
+joint:
+  rotor_inertia: 0.0015  # kg m^2 reflected to the joint
+  damping: 0.02          # Nm*s/rad structural damping

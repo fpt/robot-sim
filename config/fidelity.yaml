@@ -1,0 +1,32 @@
+# The four-stage verification ladder from memo_full.txt ("私なら4段階で検証します").
+# Stage 1 must converge before any of the realism is switched on -- if the maths
+# does not work with a perfect servo and a perfect sensor, nothing below it will.
+#
+#   stage 1  ideal PD servo,        perfect sensors      does the maths converge?
+#   stage 2  + torque/speed limits, perfect sensors      does a cheap servo still work?
+#   stage 3  + delay/friction/lash, noisy biased sensors is it realistic?
+#   stage 4  + parameter randomization                   sim-to-real margin
+1:
+  name: ideal
+  servo_phase: A
+  sensor_noise_scale: 0.0
+  sensor_bias_scale: 0.0
+  randomize: 0.0
+2:
+  name: limited
+  servo_phase: B
+  sensor_noise_scale: 0.0
+  sensor_bias_scale: 0.0
+  randomize: 0.0
+3:
+  name: realistic
+  servo_phase: D
+  sensor_noise_scale: 1.0
+  sensor_bias_scale: 1.0
+  randomize: 0.0
+4:
+  name: randomized
+  servo_phase: E
+  sensor_noise_scale: 1.0
+  sensor_bias_scale: 1.0
+  randomize: 0.15      # +-15% on servo kp/kd/tau_max/friction and FSR gain

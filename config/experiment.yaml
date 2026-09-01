@@ -1,0 +1,171 @@
+# Experiment definitions.  Each entry inherits `defaults` and overrides it.
+# memo.txt sections 12, 24, 25, 27-33, 35, 39.
+defaults:
+  physics_dt: 0.002        # 500 Hz, section 12
+  control_dt: 0.010        # 100 Hz
+  duration: 10.0           # s
+  seed: 0
+  backend: mock            # mock | isaaclab
+  terrain:
+    type: flat
+    blocks: []             # list of {x, y, size_x, size_y, height}
+  controller:
+    mode: hold             # hold | posture | dither | statemachine
+    gains:
+      k_roll: 0.35         # rad of leg-extension command per rad of roll
+      k_roll_rate: 0.04
+      k_force_roll: 0.010  # per N of left/right load error
+      k_pitch: 0.35
+      k_pitch_rate: 0.04
+      k_force_pitch: 0.010
+      k_force_twist: 0.012  # diagonal load balance; not in memo.txt, see docs/FINDINGS.md
+      height_gain: 0.004   # per N of total-load error
+      posture_limit: 0.030 # m, cap on the posture correction per leg
+      cmd_rate_limit: 1.5  # rad/s slew on u
+      normalized_force_error: true  # divide load errors by the total load
+  dither:
+    # memo.txt section 27 starts at 0.5 deg (0.0087 rad).  Measured on the mock
+    # backend that probe moves J by ~0.014 against a transient noise floor of
+    # ~0.1 -- unusable.  0.02 rad (1.15 deg) with ABBA averaging clears it.  Re-
+    # tune this on the first Isaac run: see runbooks/RB-06.
+    delta: 0.020           # rad
+    settle_time: 0.25      # s to wait after applying +/- delta
+    measure_time: 0.20     # s averaged for J and I
+    repeats: 2             # probe pairs per gradient estimate (ABBA ordered)
+    update_rule: rprop     # rprop | gradient   (see docs/FINDINGS.md)
+    alpha: 0.0005          # gradient rule only: step size (section 28)
+    rprop_step0: 0.010     # rad, initial per-joint step
+    rprop_step_min: 0.0004
+    rprop_step_max: 0.030
+    rprop_up: 1.2
+    rprop_down: 0.5
+    joints: [1]            # which joint indices to probe; [1] = FL knee (section 29)
+    step_clip: 0.02        # rad, max command change per gradient update
+    use_posture_base: false  # true = run section 26 feedback underneath the probe
+  faults: []
+  fault_monitor:                # sections 36, 37
+    enabled: true
+    active_states: [STAND, DITHER]   # only judge quasi-static, supported states
+    detectors: [mechanical_resistance, drive_failure, unstable_contact,
+                force_sensor_stuck, foot_imu_bias]   # sluggish_response: see faults.py
+    baseline_time: 16.0    # s: must cover at least one full 8-joint dither sweep
+                           # or a joint has no baseline of its own to compare to
+    window: 1.00           # s of evidence per decision
+    k_sigma: 4.0           # used by the foot-IMU drift test
+    current_ratio_high: 1.15   # I / I_baseline that counts as "working too hard"
+    current_ratio_low: 0.90    # ... and as "not pulling its weight"
+    motion_ratio_max: 0.70     # foot motion / baseline that counts as stalled
+    motion_ratio_slip: 5.0     # ... and as slipping
+    motion_ratio_soft: 0.90    # milder stall test, paired with the current rise
+    dynamic_current_margin: 0.05  # A of extra moving-vs-holding current
+                                  # (measured noise floor is ~0.037 A)
+    moving_threshold: 0.05     # rad/s of commanded rate that counts as moving
+    min_consecutive: 40    # consecutive control ticks (0.4 s) before a flag
+                           # is raised: a real fault persists, a transient at a
+                           # dither sweep boundary does not
+    cmd_activity_min: 0.0015   # rad, below this the joint is not being driven
+    max_lag: 0.20          # s, cross-correlation search range for delay faults
+    lag_margin: 0.060      # s of extra lag that counts as a sluggish servo
+  objective:               # section 23
+    # Scaling note: on a 20 mm step J_force reaches ~30 N^2 and J_pose ~0.02
+    # rad^2, so the raw terms differ by three orders of magnitude.  These
+    # weights put posture and load balance within ~5x of each other and leave
+    # power as a mild regulariser -- if w_power is large the cheapest state is
+    # "collapse and carry nothing", which is not what we are asking for.
+    w_pose: 10.0
+    w_force: 0.05
+    w_power: 0.005
+
+experiments:
+  "01_stand":
+    description: "Flat ground, no active control. Does it just stand up? (section 24)"
+    duration: 10.0
+    controller: {mode: hold}
+
+  "02_uneven_ground":
+    description: "FL foot on a +20 mm block, posture controller blind to it (section 25, 26)"
+    duration: 15.0
+    terrain:
+      type: blocks
+      blocks:
+        - {x: 0.150, y: 0.090, size_x: 0.12, size_y: 0.12, height: 0.020}
+    controller: {mode: posture}
+
+  "03_dither":
+    description: "Active sensing on one joint (FL knee), sections 27-31"
+    duration: 60.0
+    terrain:
+      type: blocks
+      blocks:
+        - {x: 0.150, y: 0.090, size_x: 0.12, size_y: 0.12, height: 0.020}
+    controller: {mode: dither}
+    dither: {joints: [1]}
+
+  "03b_dither_all":
+    description: "Same as 03 but sweeping all 8 joints in sequence (section 30)"
+    duration: 150.0        # 8 joints share the probe budget, so it needs ~3x of 03
+    terrain:
+      type: blocks
+      blocks:
+        - {x: 0.150, y: 0.090, size_x: 0.12, size_y: 0.12, height: 0.020}
+    controller: {mode: dither}
+    dither: {joints: [0, 1, 2, 3, 4, 5, 6, 7]}
+
+  "04_leg_unload":
+    description: "Unload -> lift -> verify by foot IMU -> lower -> reload (sections 32-34)"
+    duration: 25.0
+    controller: {mode: statemachine}
+    state_machine:
+      leg: 0               # FL
+      weight_shift: 0.050  # m, how far the partner foot moves along x first
+      unload_rate: 2.0     # N/s of target load ramp
+      unload_threshold: 0.30   # N, F < this counts as unloaded
+      lift_height: 0.030   # m of commanded leg retraction
+      motion_threshold: 0.10   # rad of foot rotation, integrated from its gyro
+      motion_window: 0.50  # s of resting reference taken before the lift
+      contact_threshold: 0.50  # N, touchdown detection
+      forward: 0.0         # m, no stepping yet
+
+  "05_fault":
+    description: "Inject a servo/sensor fault mid-run and detect it (sections 35-37)"
+    duration: 60.0         # one sweep to learn the baseline, inject, then detect
+    servo_phase: D         # friction and delay faults are invisible before phase D
+    terrain:
+      type: blocks
+      blocks:
+        - {x: 0.150, y: 0.090, size_x: 0.12, size_y: 0.12, height: 0.020}
+    controller: {mode: dither}
+    dither: {joints: [0, 1, 2, 3, 4, 5, 6, 7]}
+    faults:
+      - {case: A, joint: 1, t_start: 25.0}
+
+  "07_self_check":
+    description: "Insect-style self-inspection: run the cycle on all four legs (section 38)"
+    duration: 70.0
+    controller: {mode: statemachine}
+    state_machine:
+      legs: [0, 1, 2, 3]      # section 38, one leg at a time
+      weight_shift: 0.050
+      unload_rate: 2.0
+      unload_threshold: 0.30
+      lift_height: 0.030
+      motion_threshold: 0.10
+      motion_window: 0.50
+      contact_threshold: 0.50
+      forward: 0.0
+      rest_time: 1.5
+
+  "06_first_step":
+    description: "One leg takes one step forward, other three keep balancing (section 39)"
+    duration: 30.0
+    controller: {mode: statemachine}
+    state_machine:
+      leg: 0
+      weight_shift: 0.050
+      unload_rate: 2.0
+      unload_threshold: 0.30
+      lift_height: 0.030
+      motion_threshold: 0.10
+      motion_window: 0.50
+      contact_threshold: 0.50
+      forward: 0.030       # m

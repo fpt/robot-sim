@@ -1,0 +1,42 @@
+# Fault library.  memo.txt section 35.  Referenced by case letter from
+# experiment.yaml `faults: [{case: A, joint: 1, t_start: 15.0}]`.
+A:
+  expected_class: drive_failure
+  name: torque_loss
+  description: "Servo can only produce 30% of rated torque"
+  target: servo
+  params: {tau_scale: 0.3}
+B:
+  expected_class: mechanical_resistance
+  # Known blind spot at the default probe speed.  Friction is a velocity cost and
+  # the section 27 dither moves the joint at only ~0.08 rad/s, where 10x friction
+  # changes the moving-vs-holding current by 0.038 A against a 0.037 A noise
+  # floor.  Diagnosing it wants a deliberately FAST probe in the section 38
+  # self-check.  docs/FINDINGS.md
+  expected_detectable: false
+  name: high_friction
+  description: "Gearbox friction 10x"
+  target: servo
+  params: {friction_scale: 10.0}
+C:
+  expected_class: sluggish_response
+  # Known blind spot: the default detector set cannot see a pure transport
+  # delay.  Detecting it wants the controlled square-wave probe of the
+  # section 38 self-check.  docs/FINDINGS.md
+  expected_detectable: false
+  name: added_delay
+  description: "Command transport delay +100 ms"
+  target: servo
+  params: {extra_delay: 0.100}
+D:
+  expected_class: force_sensor_stuck
+  name: force_sensor_stuck
+  description: "Foot FSR freezes at its last value"
+  target: foot_force
+  params: {}
+E:
+  expected_class: foot_imu_bias
+  name: foot_imu_bias
+  description: "Foot IMU accelerometer gains a large constant bias"
+  target: foot_imu
+  params: {accel_bias: [3.0, 0.0, 0.0]}

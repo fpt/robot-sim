@@ -1,73 +1,132 @@
 # RB-02 - Isaac Lab
 
-**Goal**: Isaac Lab installed against the Isaac Sim from RB-01, one sample
-running.
-**Time**: 30-60 min.  **Needs**: RB-01 passed, venv active.
+**Goal**: `import isaaclab` works against the Isaac Sim from RB-01, and one
+simulation actually steps.
+**Time**: 15-60 min depending on route.  **Needs**: RB-01 passed, venv active.
 
-memo.txt sections 7, 8.
+docs/SPEC.md sections 7, 8.
 
-## 1. Clone
+## Two routes
+
+| | route A - pip package | route B - from source |
+|---|---|---|
+| get | `uv pip install isaaclab` | `git clone` + `./isaaclab.sh --install` |
+| gives you | the library | the library, the tutorials, the RL scripts |
+| time | ~10 min | ~40 min |
+| this project needs | **this one** | only if you want the samples |
+
+`reflex_quad` imports `isaaclab` and nothing else -- no `isaaclab.sh`, no
+`scripts/`, no task registry.  **Route A is the one to take.**  SPEC sections 7
+and 8 describe route B because that was the documented path when the plan was
+written; the pip package is now the documented default and it is less to go
+wrong.
+
+Take route B as well if you want NVIDIA's tutorials to compare against, which is
+a reasonable thing to want the first time.  They coexist: route B installs in
+editable mode and shadows the wheel.
+
+## Route A - pip package
+
+```bash
+source ~/robotics/env_isaaclab/bin/activate
+uv pip install "isaaclab[all]" \
+    --extra-index-url https://pypi.nvidia.com \
+    --index-strategy unsafe-best-match
+```
+
+Pin it once you have a version that works:
+
+```bash
+uv pip install "isaaclab[all]==2.3.2.post1" --extra-index-url https://pypi.nvidia.com
+```
+
+NVIDIA also publishes a combined extra, `isaaclab[isaacsim,all]`, which pulls
+Isaac Sim too.  Do not use it here -- RB-01 already installed Isaac Sim
+explicitly, and letting two commands both own that dependency is how you end up
+with a mystery version.
+
+### Verify
+
+```bash
+python -c "import isaaclab, isaacsim; print(isaaclab.__version__, isaacsim.__version__)"
+```
+
+Then check it can actually step physics, not merely import:
+
+```bash
+python scripts/isaac_preflight.py
+```
+
+That is RB-03's script and it does the real work -- app launch, URDF conversion,
+articulation, sensors, 100 steps.  Running it here is the honest end of RB-02.
+
+## Route B - from source
 
 ```bash
 cd ~/robotics
 git clone https://github.com/isaac-sim/IsaacLab.git
 cd IsaacLab
-git log -1 --format='%H %cd'      # record this hash in the experiment note
+git log -1 --format='%H %cd'      # record this hash
 ```
 
 Isaac Lab's `main` moves.  The hash is the difference between "it worked
 yesterday" and a debuggable report.
-
-## 2. Install
 
 ```bash
 source ~/robotics/env_isaaclab/bin/activate    # must be active
 ./isaaclab.sh --install
 ```
 
-This runs `python -m pip install -e ...` over the source packages -- hence the
-seeded venv from RB-01 step 3.
+This shells out to `python -m pip`, which is why RB-01 created the venv with
+`--seed`.  If you see `No module named pip`, that is the cause.
 
-Do **not** change Isaac Lab's own configuration to suit this project.  Keep the
-stock install; everything specific to this work lives in this repository.
+Do **not** modify Isaac Lab to suit this project.  Everything specific to this
+work lives in this repository; that separation is SPEC section 9 and it is what
+makes an Isaac Lab upgrade a small event.
 
-## 3. Run a sample
+Run a sample:
 
 ```bash
 ./isaaclab.sh -p scripts/tutorials/00_sim/create_empty.py
 ```
 
-If the path has moved in your checkout:
+If that path has moved in your checkout:
 
 ```bash
 find scripts -iname "*.py" | head -30
 ```
 
-and run the smallest `00_sim` example you find.  Add `--headless` if the window
-is a nuisance.
+Add `--headless` if the window is a nuisance.
 
-Expect: the app starts, prints simulation steps, exits cleanly.
-
-## 4. Record the state that works
+## Record
 
 ```bash
-cd ~/robotics/IsaacLab && git log -1 --format='%H'
 python -c "import isaaclab, isaacsim; print(isaaclab.__version__, isaacsim.__version__)"
+cd ~/robotics/IsaacLab 2>/dev/null && git log -1 --format='%H'   # route B only
 ```
 
-Put both in the experiment note.  memo.txt section 8 asks for this and it is
-worth the ten seconds.
+Both versions, the route you took, and the commit hash if any, into the
+experiment note.  SPEC section 8 asks for this and it costs ten seconds.
 
 ## Done when
 
-- `./isaaclab.sh --install` finished without errors
-- a tutorial script ran and exited 0
-- the Isaac Lab commit hash and both versions are written down
+- `import isaaclab` succeeds and prints a version
+- something stepped physics: `isaac_preflight.py`, or a tutorial on route B
+- the versions are written down
 
 ## If it fails
 
-- `No module named pip` -> the venv was made without `--seed`.  Recreate it
-  (RB-01 step 3) and reinstall.  This is the most common failure.
-- A build error in an extension -> `python3.11-dev` missing (RB-01 step 1).
-- The sample opens a window then dies -> try `--headless`; if that works, it is
-  a display/driver issue, not Isaac Lab, and this project does not need the GUI.
+| symptom | cause | fix |
+|---|---|---|
+| `No module named pip` | venv made without `--seed` | recreate it (RB-01 step 3) and reinstall |
+| uv cannot resolve `isaaclab` | default first-index strategy | add `--index-strategy unsafe-best-match` |
+| `import isaacsim` fails after installing isaaclab | two commands fought over the Isaac Sim version | uninstall both, redo RB-01 step 4, then route A without the `isaacsim` extra |
+| a build error in an extension | headers missing | `python3.11-dev` (RB-01 step 1) |
+| `module 'omni.usd' has no attribute 'UsdContext'` | stale Kit extension cache | delete `<venv>/lib/python3.11/site-packages/isaacsim/extscache` and relaunch |
+| the sample opens a window then dies | display or driver | try `--headless`; if that works it is not Isaac Lab, and this project runs headless anyway |
+| `uv run` cannot find isaaclab | it picked this repo's `.venv` | `uv run --active`, or call `python` directly (RB-01, "the `uv run` trap") |
+
+## Sources
+
+- [Isaac Lab: installation using Isaac Lab pip packages](https://isaac-sim.github.io/IsaacLab/main/source/setup/installation/isaaclab_pip_installation.html)
+- [Isaac Lab: installation using the Isaac Sim pip package](https://isaac-sim.github.io/IsaacLab/main/source/setup/installation/pip_installation.html)

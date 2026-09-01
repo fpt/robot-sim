@@ -27,6 +27,18 @@ The articulation is therefore driven by **effort**, with Isaac's implicit drive
 set to `stiffness = 0, damping = 0`, and `reflex_quad/servo_model.py` is the only
 position loop in the system.
 
+## Versions
+
+This project targets **Isaac Sim 5.1 + Python 3.11**, which is what SPEC section
+1 names.  Nothing in `reflex_quad/` is version specific and `pyproject.toml` asks
+only for `>=3.11`, so Isaac Sim 6.x + Python 3.12 is a config change, not a port.
+The venv's Python must match Isaac Sim's: 3.11 for 5.X, 3.12 for 6.X.
+
+Isaac Lab is installed as a **pip package** (`isaaclab[all]` from
+`pypi.nvidia.com`), not cloned.  This project imports the library and uses none
+of the repository's scripts, so the wheel is the smaller surface.  RB-02 has the
+source route as well, for the bundled tutorials.
+
 ## Timestep
 
 memo section 12: physics 500 Hz, control 100 Hz.  Isaac Lab's IMU differentiates

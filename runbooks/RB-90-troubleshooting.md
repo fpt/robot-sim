@@ -10,6 +10,11 @@
 | Isaac Sim first launch hangs on a prompt | EULA | `export OMNI_KIT_ACCEPT_EULA=YES` |
 | extension build errors | headers missing | `sudo apt install python3.11-dev` |
 | disk fills mid-install | extension cache | 60 GB free before starting |
+| `Failed to download nvidia-cublas` (or another huge wheel) | interrupted transfer | `uv cache clean nvidia-cublas` and retry -- **not** a full `uv cache clean`, which discards everything else |
+| installs fine, viewer will not start | X11 dev libraries missing | `sudo apt install libx11-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev` |
+| `module 'omni.usd' has no attribute 'UsdContext'` | stale Kit extension cache | delete `<venv>/lib/python3.11/site-packages/isaacsim/extscache` |
+| `uv run` cannot import isaacsim | uv picked this repo's `.venv`, not the Isaac one | `uv run --active`, or call `python` directly |
+| torch resolves to a CPU wheel in uv project mode | index not marked `explicit = true` | see RB-01, "Alternative: uv project mode" |
 
 ## Isaac runtime
 

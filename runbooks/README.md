@@ -8,8 +8,8 @@ runbook ends by telling you what to write in the experiment note
 | # | file | takes | what it gets you |
 |---|---|---|---|
 | 00 | [RB-00-host-check.md](RB-00-host-check.md) | 10 min | the machine is what you think it is, recorded |
-| 01 | [RB-01-python-and-isaac-sim.md](RB-01-python-and-isaac-sim.md) | 1-2 h | Python 3.11 + Isaac Sim 5.1 + CUDA PyTorch, via uv |
-| 02 | [RB-02-isaac-lab.md](RB-02-isaac-lab.md) | 30-60 min | Isaac Lab installed and a sample running |
+| 01 | [RB-01-python-and-isaac-sim.md](RB-01-python-and-isaac-sim.md) | 1-2 h | Python 3.11 + Isaac Sim 5.1 + CUDA PyTorch, via uv (uv is a documented Isaac Lab option, marked experimental) |
+| 02 | [RB-02-isaac-lab.md](RB-02-isaac-lab.md) | 15-60 min | Isaac Lab installed (pip package or source) and stepping |
 | 03 | [RB-03-project-bringup.md](RB-03-project-bringup.md) | 30 min | this repo running, mock suite green, Isaac API verified |
 | 04 | [RB-04-exp01-stand.md](RB-04-exp01-stand.md) | 20 min | it stands up (memo 24) |
 | 05 | [RB-05-exp02-uneven.md](RB-05-exp02-uneven.md) | 30 min | it levels itself on an unseen step (memo 25, 26) |

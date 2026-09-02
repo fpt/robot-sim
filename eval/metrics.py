@@ -159,7 +159,25 @@ def compute_metrics(run: Run) -> dict:
         m["J_first_quintile"] = float(np.mean(j[:n]))
         m["J_last_quintile"] = float(np.mean(j[-n:]))
         m["J_improvement_ratio"] = float(m["J_first_quintile"] / max(m["J_last_quintile"], 1e-9))
-        tau, p = _mann_kendall(j)
+        # Mann-Kendall over the whole run tests for a monotonic trend across
+        # the *entire* series.  A dither that converges quickly and then
+        # correctly sits hunting near its minimum (finding #14) has no
+        # monotonic trend in that long flat/noisy tail -- on isaaclab,
+        # 03_dither's real signal was gone by update ~5 of 33 (finding #16),
+        # and testing the whole 60 s made a working search read as "J never
+        # decreased".  Restricted to the same search-phase window
+        # _dither_search_phase_mask uses for gradient_sign_consistency, so
+        # both metrics agree on where "search" ends and "hunt" begins.
+        # J_final/J_first_quintile/J_last_quintile stay whole-run on purpose:
+        # those ask what the run ended at, not whether it was still moving.
+        updates = _dither_update_rows(run)
+        if updates is not None:
+            search = _dither_search_phase_mask(updates)
+            end_row = int(updates["rows"][search][-1]) if np.any(search) else len(j) - 1
+            j_trend_series = j[: end_row + 1]
+        else:
+            j_trend_series = j
+        tau, p = _mann_kendall(j_trend_series)
         m["J_trend_tau"] = tau
         m["J_trend_p_value"] = p
         m["J_final"] = float(np.mean(_tail(j, t)))
@@ -171,21 +189,70 @@ def compute_metrics(run: Run) -> dict:
     return m
 
 
-def _dither_metrics(run: Run) -> dict:
+def _dither_update_rows(run: Run) -> dict | None:
+    """Row index, joint, gradient sign, and rprop step of each completed
+    gradient update -- the shared raw material for every dither-derived
+    metric.  None only if this run had no dither controller at all (no
+    dither_* columns); a run that dithered but never completed one update
+    (e.g. too short) still gets a dict back, with empty arrays -- callers
+    that need to tell the two apart check `len(updates["grad"])`."""
     c = run.control
     if "dither_grad" not in c or "dither_updates" not in c:
-        return {}
+        return None
     upd = c["dither_updates"]
     change = np.where(np.diff(upd) > 0)[0]
-    if change.size == 0:
-        return {"dither_update_count": 0, "gradient_sign_consistency": 0.0}
-    grads = c["dither_grad"][change]
-    joints = c["dither_joint"][change].astype(int)
+    return {
+        "rows": change,                            # index into control.csv rows
+        "grad": c["dither_grad"][change],
+        "joint": c["dither_joint"][change].astype(int),
+        "step": c["dither_step"][change],
+    }
 
-    def consistency(sl: slice) -> float:
+
+def _dither_search_phase_mask(updates: dict) -> np.ndarray:
+    """True for updates in the genuine directed-search phase.
+
+    Per joint, up to and including the first update where that joint's own
+    RPROP step reaches its own empirical floor (the smallest step it ever
+    took) -- the point the search itself decided the sign was no longer
+    reliable and shrank to minimum, i.e. finding #14's "converged, now
+    hunting" boundary, detected from what the algorithm actually did rather
+    than assumed from a fixed fraction of the run.  Falls back to the first
+    60% of that joint's own updates (the original heuristic) if the step
+    never bottoms out, e.g. a short run or a joint that never converges.
+
+    Backend-dependent in practice, not by design: mock's search on
+    03_dither ran consistent-sign for ~10 of 33 updates before hunting;
+    isaaclab's converged in ~5, because the real optimum needed was ~10x
+    smaller (see docs/FINDINGS.md #16) -- a fixed "first 60% of updates"
+    fraction (still the fallback here) was calibrated against mock's slower
+    convergence and did not transfer.
+    """
+    joint, step = updates["joint"], updates["step"]
+    mask = np.zeros(len(joint), dtype=bool)
+    for j in np.unique(joint):
+        idx = np.flatnonzero(joint == j)
+        j_step = step[idx]
+        floor = j_step.min()
+        at_floor = np.flatnonzero(np.isclose(j_step, floor, rtol=1e-6))
+        cutoff = int(at_floor[0]) + 1 if at_floor.size else max(1, int(0.6 * len(idx)))
+        mask[idx[:cutoff]] = True
+    return mask
+
+
+def _dither_metrics(run: Run) -> dict:
+    updates = _dither_update_rows(run)
+    if updates is None:
+        return {}
+    grads, joints = updates["grad"], updates["joint"]
+    if len(grads) == 0:
+        return {"dither_update_count": 0, "gradient_sign_consistency": 0.0}
+    search = _dither_search_phase_mask(updates)
+
+    def consistency(mask: np.ndarray) -> float:
         consist, weight = 0.0, 0
-        for j in np.unique(joints[sl]):
-            g = np.sign(grads[sl][joints[sl] == j])
+        for j in np.unique(joints[mask]):
+            g = np.sign(grads[mask][joints[mask] == j])
             g = g[g != 0]
             if g.size < 2:
                 continue
@@ -193,15 +260,12 @@ def _dither_metrics(run: Run) -> dict:
             weight += g.size
         return float(consist / weight) if weight else 0.0
 
-    # Judge the search phase, not the whole run.  Once the offset sits at the
-    # optimum the gradient sign SHOULD alternate -- that is a converged dither
-    # hunting around the minimum, and scoring it as inconsistency would punish
-    # exactly the behaviour we are trying to produce.
-    half = max(1, int(0.6 * len(grads)))
+    c = run.control
     return {
-        "dither_update_count": int(upd[-1]),
-        "gradient_sign_consistency": consistency(slice(0, half)),
-        "gradient_sign_consistency_full": consistency(slice(0, len(grads))),
+        "dither_update_count": int(len(grads)),
+        "dither_search_phase_updates": int(np.sum(search)),
+        "gradient_sign_consistency": consistency(search),
+        "gradient_sign_consistency_full": consistency(np.ones(len(grads), dtype=bool)),
         "dither_offset_norm_final": float(c["u_offset_norm"][-1]) if "u_offset_norm" in c else 0.0,
     }
 

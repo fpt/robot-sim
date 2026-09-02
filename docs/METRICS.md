@@ -36,16 +36,17 @@ Every key `eval/metrics.py` produces.  These names are the contract with
 
 | metric | meaning |
 |---|---|
-| `J_first_quintile`, `J_last_quintile`, `J_improvement_ratio` | first fifth / last fifth |
-| `J_trend_tau`, `J_trend_p_value` | Mann-Kendall trend, series subsampled to 200 points first (consecutive 100 Hz samples are not independent) |
-| `J_final` | final value |
+| `J_first_quintile`, `J_last_quintile`, `J_improvement_ratio` | first fifth / last fifth, whole run |
+| `J_trend_tau`, `J_trend_p_value` | Mann-Kendall trend, series subsampled to 200 points first (consecutive 100 Hz samples are not independent).  For a dither run, restricted to the search phase (see `gradient_sign_consistency` below) -- the whole run tests for a trend across a long, correctly-flat hunting tail too and reads a working search as "J never decreased" (finding #16).  Non-dither runs get the whole series, unchanged |
+| `J_final` | final value, whole run |
 
 ## Dither (memo section 27-30)
 
 | metric | meaning |
 |---|---|
 | `dither_update_count` | gradient updates completed |
-| `gradient_sign_consistency` | over the **first 60%** of updates: fraction agreeing with the per-joint modal sign.  A converged dither alternates on purpose, so scoring the whole run punishes success |
+| `dither_search_phase_updates` | how many of those updates `gradient_sign_consistency` (and `J_trend_p_value` above) actually scored |
+| `gradient_sign_consistency` | over the **search phase**: fraction agreeing with the per-joint modal sign.  A converged dither alternates on purpose, so scoring the whole run punishes success.  Search phase = per joint, up to and including the first update where that joint's own RPROP step reaches its own empirical floor (the point the search itself gave up on a reliable sign and shrank to minimum) -- falls back to the first 60% of that joint's updates if the step never bottoms out.  Replaced a flat "first 60% of updates" in finding #14; that fraction was implicitly calibrated against mock's slower convergence and mis-scored isaaclab's faster one (finding #16: mock's search on 03_dither ran ~10 of 33 updates before hunting, isaaclab's ~2-3, because the real optimum needed was ~10x smaller) |
 | `gradient_sign_consistency_full` | same over the whole run, reported not gated |
 | `dither_offset_norm_final` | how far the search moved the command |
 

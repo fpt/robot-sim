@@ -345,3 +345,77 @@ The lesson for next time this project touches a backend's `reset()`: check
 criteria table. A passing `contact_sane`/`no_fall` measures the robot's state
 several seconds in, after the servo has had time to (mostly) recover from a
 bad spawn -- it does not mean the spawn was clean.
+
+## 16. `03_dither`'s "first 60% of updates" search-phase window doesn't survive a faster backend
+
+With finding #15's fixes landed, `03_dither` on `isaaclab` stands the whole
+run (`no_fall`/`no_divergence` pass, `level_roll`/`level_pitch` well inside
+tolerance) and `j_improvement` clears its bar by 3-4x -- but `j_decreases`
+and `gradient_consistent` still failed:
+
+```
+j_decreases          J_trend_p_value = 0.2287           (need <= 0.05)
+gradient_consistent  gradient_sign_consistency = 0.5556  (need >= 0.70)
+```
+
+Both are statistical tests over a *window*, and both windows were the wrong
+size for this backend. `j_decreases` (`_mann_kendall`) ran over the entire
+run; `gradient_consistent` (finding #14) ran over a fixed first 60% of
+updates. `truth.csv` and `06_dither.png` (`J(+d) - J(-d)` vs update #) show
+why: on `isaaclab` the gradient signal was real and large for the first ~2
+updates (`-7.5`, `-2.3`), then collapsed to flat noise (`|dJ| < 0.03`) for
+the remaining 31 of 33 -- RPROP's own step size bottomed out at
+`rprop_step_min` by update 9 and stayed there. Comparing directly against a
+fresh mock run of the *same config*: mock's gradient stayed one-signed for
+10 straight updates (`-0.7` down to `-24.7`) before its first flip, and the
+final offset it converged to was **~10x isaaclab's** (`u_offset_norm_final`
+0.211 rad on mock vs 0.020 rad on isaaclab). Same 20 mm block, same probed
+joint (FL knee), same `delta`/`settle_time`/`measure_time`/`repeats` --
+isaaclab's real 3-D dynamics apparently let the other legs' passive contact
+compliance absorb most of the block's disturbance on their own, so the one
+probed joint has far less correcting to do, and does it in far fewer
+updates. Mock has no such compliance (no horizontal motion, no yaw) to
+absorb anything with -- everything has to go through the term being
+measured. A "search phase = first 60% of updates" window sized for mock's
+~10-update convergence scored isaaclab's ~2-3-update one against 28 updates
+of legitimate post-convergence hunting.
+
+**Fix**: `eval/metrics.py` now derives the search-phase boundary from what
+RPROP itself did -- per joint, up to and including the first update where
+its own step reaches its own empirical floor (`_dither_search_phase_mask`),
+instead of a fixed fraction. `J_trend_p_value` (`j_decreases`) is now
+computed over that same window rather than the whole run; previously it was
+not gated at all, and a long, correctly-flat post-convergence tail reads as
+"no trend" no matter how sharp the initial drop was. Same isaaclab run,
+re-evaluated from the same logged CSVs, no rerun needed:
+
+```
+j_decreases          J_trend_p_value = 0.00032   (PASS, was 0.2287)
+gradient_consistent  gradient_sign_consistency = 0.667  (still FAIL, was 0.556)
+```
+`dither_search_phase_updates` (new metric) = 10 of 33 -- close to mock's own
+~10-update convergence count, which is the point: the window now measures
+what actually happened instead of assuming mock's timing.
+
+**What's left is real, not a windowing artifact.** `gradient_consistent`
+improved but is still short of 0.70. Tried the next knob RB-06 names --
+`repeats: 2 -> 3` (more probe pairs averaged per estimate) -- and it made
+things *worse*: `gradient_sign_consistency` came back at exactly the same
+0.667 (nearly the identical sign sequence, `-,-,+,-,+,-,-,+,-`, essentially
+unchanged in value not just sign), while `j_decreases` regressed
+(p=0.097, FAIL) because repeats=3 takes 2.7s/update instead of 1.8s, so 60s
+buys ~22 updates instead of 33 -- fewer samples, weaker test, same signal.
+Reverted. This rules out measurement noise as the cause: ABBA averaging
+already cancels it at repeats=2, and more of it does not change the
+sign sequence. The real constraint is that isaaclab's genuine directed-descent
+phase for this scenario is only ~2 updates long before the true optimum is
+essentially reached -- there is no window size or averaging depth that turns
+2 clean signs into a statistically convincing consistency ratio at a 0.70
+bar calibrated against mock's ~10.
+
+**Left as an open question, not changed unilaterally**: whether 0.70 is the
+right bar for `gradient_consistent` on isaaclab, or whether it should be
+backend- or scenario-aware. `config/criteria.yaml` has no per-backend
+threshold mechanism today, and changing a pass bar is its own commit with
+its own reasoning by this project's own rule -- this is the reasoning,
+recorded for whoever makes that call.

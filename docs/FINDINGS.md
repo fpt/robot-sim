@@ -244,3 +244,21 @@ PhysX's actual collision geometry in a way the mock's unilateral spring-damper
 foot never has to resolve. Whichever it is, this is the first concrete number
 this project has for the gap `docs/MOCK_BACKEND.md` always said would be
 there -- log it against the fix, not against a v2 of this finding.
+
+**Confirmed downstream, not a fluke of one run** (2026-09-02, same session):
+`02_uneven_ground` and `03_dither` both fail the same way on `isaaclab`, as
+RB-04 warns they would ("if this fails, nothing downstream means anything").
+
+```
+02_uneven_ground  [FAIL]  final_abs_roll_deg=643.3  final_abs_pitch_deg=614.1
+                          min_foot_force_final_N=0.048 (a foot came off)
+03_dither         [FAIL]  final_abs_roll_deg=199.8  final_abs_pitch_deg=149
+```
+
+`02`'s roll/pitch past 360 degrees means it is not one fall and rest -- the
+body keeps tumbling for the whole 15 s window, unlike `01`'s single topple.
+Worth noting for whoever chases this: `03_dither`'s `j_decreases` check still
+**passes** (Mann-Kendall p = 1.1e-55) while the robot is down and `no_fall`
+fails -- `J`'s pose and force terms both legitimately shrink once a fallen
+body stops moving, so a passing `j_decreases` on Isaac is not by itself
+evidence the dither search is doing anything; check `no_fall` first.

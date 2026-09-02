@@ -1,9 +1,11 @@
 # Findings
 
-Things that were discovered while building this repository, on the mock backend,
-before any GPU time was spent.  Each one is either a deviation from `memo.txt`
-or a constraint the memo does not mention.  Every one of them would otherwise
-have been found the expensive way: mid-experiment on the CUDA machine.
+Things that were discovered while building this repository.  1-14 are from the
+mock backend, before any GPU time was spent; each is either a deviation from
+`memo.txt` or a constraint the memo does not mention, and every one of them
+would otherwise have been found the expensive way: mid-experiment on the CUDA
+machine.  15 on is from real Isaac Sim time, once the bring-up in
+`docs/ISAAC_NOTES.md` reached a working `isaaclab` backend.
 
 They are all reproducible: the number in brackets is the test or experiment that
 demonstrates it.
@@ -203,3 +205,42 @@ servo gives easily.  [`tests/test_robot.py::test_ik_fk_round_trip`]
 A converged dither alternates its gradient sign on purpose -- that is what
 hunting around a minimum looks like.  Scored over the whole run it reads 0.66;
 over the first 60% of updates, 0.83.  The criterion uses the search phase.
+
+## 15. `01_stand` stands on mock and falls over on real Isaac physics
+
+`docs/MOCK_BACKEND.md` says outright that mock has no horizontal motion, no
+yaw, no tipping sideways -- so a mock `[PASS]` was never proof the robot
+stands, only that the control logic and plumbing are sound.  First real run
+on the `isaaclab` backend, once bring-up was working end to end
+(`docs/ISAAC_NOTES.md`), confirms it is not enough:
+
+```
+python -m reflex_quad 01_stand --backend isaaclab --duration 5 --eval
+=== 01_stand  [FAIL]  logs/01_stand_20260902_120202
+   [PASS   ] no_nan                   nan_count = 0
+   [FAIL   ] no_divergence            diverged = True
+   [FAIL   ] no_fall                  fell_over = True
+   [FAIL   ] contact_sane             total_force_mean_N = 0.4012  (need >= 5.0)
+   [PASS   ] settled                  settling_time_s = 2.31       (need <= 3.0)
+   [FAIL   ] quiet_roll               final_abs_roll_deg = 64.01   (need <= 2.0)
+   [FAIL   ] quiet_pitch              final_abs_pitch_deg = 130.3  (need <= 2.0)
+   [FAIL   ] even_load                final_force_cv = 1.051       (need <= 0.15)
+```
+
+Same config the mock run passes with `total_force_mean_N = 14.16`,
+`final_abs_roll_deg = 0.17`, `final_abs_pitch_deg = 0.12`.  Pitch beyond 130
+degrees and near-zero mean contact force say the robot is on its side or back
+by the end of the window, not standing with a large tilt -- `fell_over`
+(tilt > 45 deg) trips well before `diverged` (tilt > 60 deg) does.
+
+**Not yet root-caused.** Candidates, in the order they'd be cheapest to check:
+gains tuned against the mock's reduced-order (heave/roll/pitch only, no
+horizontal freedom) dynamics not holding once the body can actually translate
+and yaw; the effort-driven joints (section on "why the servo is ours" in
+`docs/ISAAC_NOTES.md`) behaving differently from mock's second-order joint
+model under real link inertia and self-contact; or the initial spawn height
+(`stance.height + 0.02`) putting the feet in penetration or free-fall against
+PhysX's actual collision geometry in a way the mock's unilateral spring-damper
+foot never has to resolve. Whichever it is, this is the first concrete number
+this project has for the gap `docs/MOCK_BACKEND.md` always said would be
+there -- log it against the fix, not against a v2 of this finding.

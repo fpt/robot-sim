@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .. import JOINT_NAMES, LEG_NAMES, N_JOINTS
+from .. import JOINT_NAMES, LEG_NAMES, N_JOINTS, N_LEGS
 from ..isaac_boot import ensure_app
 from ..robot import LegGeometry
 from .base import SimState
@@ -132,6 +132,13 @@ class IsaacLabBackend:
         self._joint_index = self._build_joint_index()
         self.t = 0.0
         self._last_state: SimState | None = None
+        # net horizontal displacement of each foot since its own touchdown --
+        # mock tracks the same quantity (mock.py's _update_slip) from an
+        # explicitly unmeasured friction coefficient; this is real PhysX
+        # contact/friction, the actual number that one is trying to predict.
+        self._foot_touchdown_xy = np.zeros((N_LEGS, 2))
+        self._foot_in_contact = np.zeros(N_LEGS, dtype=bool)
+        self._foot_slip = np.zeros(N_LEGS)
 
     # -- setup helpers ---------------------------------------------------
     def _ensure_usd(self, isaac_cfg: dict) -> str:
@@ -284,12 +291,29 @@ class IsaacLabBackend:
         foot_pos = np.stack([
             self._body_pos(f"{n}_foot") for n in LEG_NAMES
         ])
+        self._update_slip(foot_pos, contact)
         return SimState(
             t=self.t, q=q, qd=qd, body_pos=pos, body_rpy=rpy, body_vel=vel,
             body_omega=body_gyro if omega is None else omega,
             body_accel_body=body_acc, foot_pos=foot_pos,
+            foot_slip_dist=self._foot_slip.copy(),
             foot_accel_body=foot_acc, foot_omega=foot_gyro, contact_force=contact,
         )
+
+    def _update_slip(self, foot_pos: np.ndarray, contact: np.ndarray) -> None:
+        """Net horizontal displacement of each foot from its own touchdown
+        point.  Same definition as MockBackend._update_slip -- see that
+        docstring; this is the real-PhysX-friction number mock's own
+        (explicitly unmeasured) friction coefficient is trying to predict."""
+        for i in range(N_LEGS):
+            in_contact = float(contact[i, 2]) > 0.0
+            if in_contact and not self._foot_in_contact[i]:
+                self._foot_touchdown_xy[i] = foot_pos[i, :2]
+            self._foot_slip[i] = (
+                float(np.linalg.norm(foot_pos[i, :2] - self._foot_touchdown_xy[i]))
+                if in_contact else 0.0
+            )
+            self._foot_in_contact[i] = in_contact
 
     def _body_pos(self, name: str) -> np.ndarray:
         names = list(self.robot.body_names)               # VERIFY

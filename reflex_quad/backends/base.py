@@ -7,7 +7,7 @@ one physics step, and report truth.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 import numpy as np
@@ -29,6 +29,13 @@ class SimState:
     foot_accel_body: np.ndarray   # (4, 3) specific force at each foot
     foot_omega: np.ndarray    # (4, 3)
     contact_force: np.ndarray  # (4, 3) world
+    # (4,) horizontal distance each foot has moved from its own touchdown
+    # point, reset to 0 on liftoff and on a fresh touchdown.  Defaulted so
+    # existing SimState(...) call sites (tests included) do not need
+    # updating; a backend that does not track it reports zero, which reads
+    # as "no slip measured", not "no slip happened" -- see the backend's own
+    # docstring for which one it actually is.
+    foot_slip_dist: np.ndarray = field(default_factory=lambda: np.zeros(4))
 
 
 class SimBackend(Protocol):

@@ -140,6 +140,9 @@ class MockBackend:
         self._foot_acc = np.zeros((N_LEGS, 3))
         self._body_acc = np.zeros(3)    # world-frame linear acceleration
         self.contact_force = np.zeros((N_LEGS, 3))
+        self._foot_touchdown_xy = np.zeros((N_LEGS, 2))
+        self._foot_in_contact = np.zeros(N_LEGS, dtype=bool)
+        self._foot_slip = np.zeros(N_LEGS)
         self.reset()
 
     # ------------------------------------------------------------------
@@ -159,6 +162,10 @@ class MockBackend:
         self.vel[:] = 0.0
         self._foot_vel[:] = 0.0
         self._foot_acc[:] = 0.0
+        self._foot_in_contact[:] = ground + ext >= self.pos[2] - 1e-9
+        for i in range(N_LEGS):
+            self._foot_touchdown_xy[i] = [self.hx[i], self.hy[i]]
+        self._foot_slip[:] = 0.0
         self.t = 0.0
         return self.state()
 
@@ -284,6 +291,24 @@ class MockBackend:
         self._foot_acc = (foot_vel2 - prev_vel) / h
         self._foot_vel = foot_vel2
         self.contact_force = force2
+        self._update_slip(foot_pos2, force2)
+
+    def _update_slip(self, foot_pos: np.ndarray, force: np.ndarray) -> None:
+        """Net horizontal displacement of each foot from its own touchdown
+        point -- how far it has actually walked away from where it landed,
+        not the path length it slid along the way.  Answers "did increasing
+        mu reduce slip" directly; see docs/FINDINGS.md and the friction
+        model's own caveats in the module docstring (viscous + Coulomb cap,
+        not true stick-slip, so this is likely an overestimate)."""
+        for i in range(N_LEGS):
+            in_contact = force[i, 2] > 0.0
+            if in_contact and not self._foot_in_contact[i]:
+                self._foot_touchdown_xy[i] = foot_pos[i, :2]
+            self._foot_slip[i] = (
+                float(np.linalg.norm(foot_pos[i, :2] - self._foot_touchdown_xy[i]))
+                if in_contact else 0.0
+            )
+            self._foot_in_contact[i] = in_contact
 
     # ------------------------------------------------------------------
     def terrain_height(self, x: float, y: float) -> float:
@@ -317,6 +342,7 @@ class MockBackend:
             foot_accel_body=foot_sf,
             foot_omega=foot_omega,
             contact_force=self.contact_force.copy(),
+            foot_slip_dist=self._foot_slip.copy(),
         )
 
     def close(self) -> None:

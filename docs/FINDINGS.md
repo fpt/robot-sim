@@ -419,3 +419,73 @@ backend- or scenario-aware. `config/criteria.yaml` has no per-backend
 threshold mechanism today, and changing a pass bar is its own commit with
 its own reasoning by this project's own rule -- this is the reasoning,
 recorded for whoever makes that call.
+
+## 17. Giving mock real 3-D coupling makes existing experiments fail -- correctly
+
+Layer 2 of `docs/reflex_quad_12dof_trot_plan.md` ("mock 拡張") replaced
+mock's per-axis lever-arm formulas (`ddroll = sum(f*hy)/ixx`,
+`ddpitch = -sum(f*foot_x)/iyy`, no yaw, no x/y, small-angle) with a real
+moving-point-on-a-rotating-body kinematic chain and a `sum(r x F)` moment
+about the body CoM in world frame, full 6-DOF, proper trig. Before trusting
+it: in the small-angle, flat-stance, no-friction limit, `cross([hx, hy,
+-ext], [0, 0, fz])` works out to `[hy*fz, -hx*fz, 0]` -- exactly the old
+`ddroll`/`ddpitch` numerators, term for term. The new model is a strict
+generalisation of the old one, not a different one; `01_stand` on the new
+physics is quiet (final roll 0.17 deg, pitch 0.12 deg, x drift under 4 mm
+over the whole run) exactly as before.
+
+Two existing experiments then failed their existing `config/criteria.yaml`
+thresholds, unchanged by this work:
+
+```
+04_leg_unload  max_abs_tilt_during_lift_deg = 23.89  (need <= 8.0, was passing)
+               sm_returned_to_stand = False           (need true, was passing)
+03_dither      J_improvement_ratio = 1.235             (need >= 1.5, was passing)
+               final_abs_roll_deg = 9.797               (need <= 3.0, was passing)
+```
+
+Both share a cause: **the disturbance was always this large; the pre-Layer-2
+model could not represent enough of the coupling to show it.**
+`04_leg_unload` lifts one of four feet -- a large, genuinely 3-D disturbance
+-- and holds balance on the other three with `PostureController`'s roll/pitch
+feedback plus a fixed `weight_shift` that relocates the support line off the
+CoM (see the comment in `state_machine.py`); that combination was tuned
+against a model that structurally could not show real tip coupling.
+`03_dither` has *no* active balance term at all by design
+(`use_posture_base: false` -- "no control law for it", RB-06) and probes only
+one joint, so any newly-representable roll from the block has nothing
+correcting it. Neither is a physics bug (see the formula-reduction check
+above); both are the mock backend finally being able to show what an
+under-actuated or under-corrected disturbance response actually costs --
+which is the entire reason Layer 2 exists.
+
+**Not retuned here, on purpose.** Retuning `weight_shift`/`PostureController`
+gains for `04_leg_unload`, or adding an active correction term to
+`03_dither`'s scenario, is controller work -- a different task from "extend
+mock's physics" and belongs with whoever next touches those controllers,
+now armed with real numbers to tune against instead of numbers that were
+passing for the wrong reason. The two affected tests in
+`tests/test_end_to_end.py` are marked `xfail` with a reference to this
+finding rather than weakened or deleted, so a future retune turning them
+green again is visible as the fix landing, not as a silently-passing test
+nobody re-examined.
+
+**One root cause, not two -- it cascades.** `06_first_step` and
+`07_self_check` both build on the same `LegCycleController` state machine as
+`04_leg_unload`, and both hit the *identical* `23.89` deg tilt and abort on
+the very same first leg-lift (not covered by a strict pytest check, only the
+loose "did not NaN or diverge" smoke test, which still passes for both).
+`sm_cycles = 0` on `07_self_check` and `sm_foot_forward_displacement_m ~ 0`
+on `06_first_step` are consequences of that one abort, not three independent
+problems -- whoever retunes `state_machine.py`'s single-leg-lift balance
+fixes all three at once.
+
+**Not everything shifted worse.** `02_uneven_ground`'s `level_roll` now
+passes more comfortably (1.88 vs the 3 deg bar) than before -- the richer
+physics evidently lets the section 26 + twist law respond well from the
+start. That in turn makes `improved_roll` (peak-early-tilt vs final-tilt, a
+2x-or-better bar) fail: there just was not much of an early peak left to
+improve from (peak ~2.3 deg, final 1.88). Not covered by a strict pytest
+check (only the loose smoke test), and arguably the better outcome measured
+by a ratio built to expect a worse one -- noted here so it is not mistaken
+for damage on some future pass through this list.

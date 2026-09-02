@@ -53,6 +53,19 @@ class LegGeometry:
         s01 = np.sin(q0 + q1)
         return float(-(self.l1 * s0 + self.l2 * s01)), float(-self.l2 * s01)
 
+    def foot_offset_jacobian(self, q0: float, q1: float) -> tuple[float, float]:
+        """d(foot_offset x)/dq0, d(foot_offset x)/dq1.
+
+        Needed by the mock backend's Layer 2 physics (docs/reflex_quad_12dof_trot_plan.md)
+        to get an analytic foot horizontal velocity -- v_foot = v_hip + omega x r +
+        R @ (fx_dot, 0, -ext_dot) -- rather than a finite difference, for the same
+        numerical-stability reason extension_jacobian already exists: a spring-damper
+        contact model wants a velocity that is not a step behind the force it damps.
+        """
+        c0 = np.cos(q0)
+        c01 = np.cos(q0 + q1)
+        return float(self.l1 * c0 + self.l2 * c01), float(self.l2 * c01)
+
     # -- inverse kinematics ------------------------------------------------
     def ik(self, height: float, forward: float = 0.0) -> tuple[float, float]:
         """Angles that put the foot `height` below and `forward` ahead of the hip."""

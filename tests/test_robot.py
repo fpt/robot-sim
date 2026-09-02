@@ -31,6 +31,16 @@ def test_extension_jacobian_matches_finite_difference(geom):
     assert j1 == pytest.approx(n1, abs=1e-6)
 
 
+def test_foot_offset_jacobian_matches_finite_difference(geom):
+    q0, q1, eps = -0.6, 1.3, 1e-6
+    j0, j1 = geom.foot_offset_jacobian(q0, q1)
+    fx = lambda a, b: geom.foot_offset(a, b)[0]  # noqa: E731
+    n0 = (fx(q0 + eps, q1) - fx(q0 - eps, q1)) / (2 * eps)
+    n1 = (fx(q0, q1 + eps) - fx(q0, q1 - eps)) / (2 * eps)
+    assert j0 == pytest.approx(n0, abs=1e-6)
+    assert j1 == pytest.approx(n1, abs=1e-6)
+
+
 def test_unreachable_height_is_clipped_not_nan(geom):
     q0, q1 = geom.ik(0.9)          # beyond a 0.24 m reach
     assert np.isfinite([q0, q1]).all()

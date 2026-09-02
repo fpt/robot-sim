@@ -9,6 +9,13 @@ defaults:
   terrain:
     type: flat
     blocks: []             # list of {x, y, size_x, size_y, height}
+    friction: 0.7          # mock backend only, section "mock 拡張" of
+                           # docs/reflex_quad_12dof_trot_plan.md.  Generic
+                           # rubber-pad placeholder, not measured -- least
+                           # trusted number in the mock physics, see
+                           # docs/reflex_quad_sts3215_isaac_eval_plan.md
+                           # section 5.3 and the plan's own sensitivity-sweep
+                           # section.  Isaac ignores this key entirely.
   controller:
     mode: hold             # hold | posture | dither | statemachine
     gains:

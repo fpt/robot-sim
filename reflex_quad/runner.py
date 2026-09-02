@@ -282,9 +282,15 @@ def _truth_row(t, sim, tau) -> dict:
     row.update(
         body_x=sim.body_pos[0], body_y=sim.body_pos[1], body_z=sim.body_pos[2],
         body_roll=sim.body_rpy[0], body_pitch=sim.body_rpy[1], body_yaw=sim.body_rpy[2],
-        body_vz=sim.body_vel[2], body_wx=sim.body_omega[0], body_wy=sim.body_omega[1],
+        body_vx=sim.body_vel[0], body_vy=sim.body_vel[1], body_vz=sim.body_vel[2],
+        body_wx=sim.body_omega[0], body_wy=sim.body_omega[1], body_wz=sim.body_omega[2],
     )
     for i, name in enumerate(LEG_NAMES):
+        row[f"foot_x_{name}"] = sim.foot_pos[i, 0]
+        row[f"foot_y_{name}"] = sim.foot_pos[i, 1]
         row[f"foot_z_{name}"] = sim.foot_pos[i, 2]
+        row[f"Fx_{name}"] = sim.contact_force[i, 0]
+        row[f"Fy_{name}"] = sim.contact_force[i, 1]
         row[f"Fz_{name}"] = sim.contact_force[i, 2]
+        row[f"foot_slip_{name}"] = sim.foot_slip_dist[i]
     return row

@@ -489,3 +489,41 @@ improve from (peak ~2.3 deg, final 1.88). Not covered by a strict pytest
 check (only the loose smoke test), and arguably the better outcome measured
 by a ratio built to expect a worse one -- noted here so it is not mistaken
 for damage on some future pass through this list.
+
+## 18. Finding #17's tilt is not friction -- confirmed by actually varying mu
+
+`foot_slip_dist` (net horizontal displacement of each foot from its own
+touchdown point, `MockBackend`/`IsaacLabBackend._update_slip`) is now logged
+to `truth.csv` per leg, so "is this a friction problem" stopped being a
+guess. On `04_leg_unload` at the original `mu = 0.7`, `FL`'s foot creeps
+continuously during the lift -- `|Fx, Fy| == mu * Fz` to four decimal places
+at every sample from t=13.5s on, i.e. friction is pinned at its Coulomb cap
+the whole time, not merely large. Slip grows roughly linearly, ~44 mm by
+t=24s. Exactly the mechanism the friction model's own docstring warned about:
+viscous + Coulomb-capped has no static "stuck" regime, so a demand at or
+above the cap slides forever rather than holding.
+
+That looked like a strong candidate for finding #17's excess tilt, so it was
+tested directly rather than assumed:
+
+```
+mu = 0.7   max_abs_tilt_during_lift_deg = 23.89   final_abs_roll_deg (03_dither) = 9.80
+mu = 1.0   max_abs_tilt_during_lift_deg = 23.85   -- essentially unchanged
+mu = 5.0   max_abs_tilt_during_lift_deg = 23.89   final_abs_roll_deg (03_dither) = 9.63
+```
+
+`mu = 5.0` makes the Coulomb cap large enough that it essentially never
+binds -- slip should be near zero -- and the tilt **did not move**. This
+rules out friction/slip as the cause of finding #17's regressions, cleanly:
+whatever creates the ~24 deg single-leg-lift tilt and the ~9.8 deg
+uncorrected dither roll, it is upstream of the friction model entirely --
+the rotational statics of lifting one of four feet (the `sum(r x F)` moment
+this project's Layer 2 now correctly computes, see #17's formula-reduction
+check) and the controller's response to it, not how much a foot slides.
+`terrain.friction` stays at 0.7; changing it was not the fix, and there is
+now a direct measurement (not an assumption) saying so. Whoever retunes
+`state_machine.py`/`PostureController` for #17 does not need to touch
+friction to do it -- but `foot_slip_dist` is on the table now for the
+questions it *is* the right tool for: yaw-propulsion slip margin, and
+comparing mock's predicted slip against Isaac's real one once the 12DOF
+joints exist.

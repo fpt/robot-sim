@@ -43,9 +43,18 @@ TRUTH_COLUMNS = [
     *[f"tau_{n}" for n in JOINT_NAMES],
     "body_x", "body_y", "body_z",
     "body_roll", "body_pitch", "body_yaw",
-    "body_vz", "body_wx", "body_wy",
+    "body_vx", "body_vy", "body_vz",
+    "body_wx", "body_wy", "body_wz",
+    *[f"foot_x_{n}" for n in LEG_NAMES],
+    *[f"foot_y_{n}" for n in LEG_NAMES],
     *[f"foot_z_{n}" for n in LEG_NAMES],
+    *[f"Fx_{n}" for n in LEG_NAMES],
+    *[f"Fy_{n}" for n in LEG_NAMES],
     *[f"Fz_{n}" for n in LEG_NAMES],
+    # net horizontal displacement of each foot from its own touchdown point,
+    # 0 while airborne -- see MockBackend._update_slip / IsaacLabBackend
+    # ._update_slip.
+    *[f"foot_slip_{n}" for n in LEG_NAMES],
 ]
 
 

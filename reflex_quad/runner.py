@@ -38,6 +38,16 @@ CONTROLLERS = {
 }
 COMMAND_HISTORY = 16
 
+# Sanity bounds for _assert_sane_initial_state, not a research tuning value --
+# every backend's reset() is contractually supposed to reproduce
+# geom.nominal_command() exactly, so these are slack for float/solver noise,
+# not something an experiment should ever need to change.
+INITIAL_STATE_TOL = {
+    "joint_pos_rad": 0.01,       # ~0.6 deg
+    "foot_penetration_m": 0.005,  # 5 mm into the terrain
+    "foot_gap_m": 0.05,           # 5 cm floating above it
+}
+
 
 def make_controller(cfg: dict, geom: LegGeometry):
     mode = cfg["controller"]["mode"]
@@ -52,6 +62,58 @@ def _assert_isolated(controller, backend, servos) -> None:
         if value is backend or value is servos:
             raise AssertionError(
                 f"controller.{name} holds a reference to simulator internals"
+            )
+
+
+def _assert_sane_initial_state(sim, geom: LegGeometry, backend) -> None:
+    """Catch a broken reset() before spending a run on it.
+
+    Every backend's reset() is supposed to put the robot at
+    geom.nominal_command() with the feet resting on the terrain under them.
+    IsaacLabBackend.reset() silently violated that -- it wrote the physics
+    scene's default state but never actually applied it, so the robot spawned
+    at the URDF's raw rest pose instead (straight legs, ~4 cm of foot
+    penetration) -- and it took a full run of tumbling truth.csv to notice.
+    See docs/FINDINGS.md #15.  This is cheap (t=0 only) and backend-agnostic:
+    it reads only what SimState already returns, the same truth every backend
+    logs to truth.csv anyway, not something a controller may see.
+    """
+    u0 = geom.nominal_command()
+    if not np.all(np.isfinite(sim.q)):
+        raise AssertionError(f"reset(): non-finite joint_pos {sim.q}")
+    err = np.abs(sim.q - u0)
+    bad = err > INITIAL_STATE_TOL["joint_pos_rad"]
+    if np.any(bad):
+        bad_joints = [JOINT_NAMES[i] for i in np.flatnonzero(bad)]
+        raise AssertionError(
+            "reset(): joint_pos does not match nominal_command() -- the "
+            f"backend did not apply init_state.  q={sim.q}, expected={u0}, "
+            f"off by {err[bad]} rad on {bad_joints}"
+        )
+    hip_lo, hip_hi = geom.hip_limit
+    knee_lo, knee_hi = geom.knee_limit
+    for i, name in enumerate(JOINT_NAMES):
+        lo, hi = (hip_lo, hip_hi) if i % 2 == 0 else (knee_lo, knee_hi)
+        if not (lo <= sim.q[i] <= hi):
+            raise AssertionError(
+                f"reset(): {name}={sim.q[i]:.4f} rad outside its limit [{lo}, {hi}]"
+            )
+
+    if not np.all(np.isfinite(sim.foot_pos)):
+        raise AssertionError(f"reset(): non-finite foot_pos {sim.foot_pos}")
+    for i, name in enumerate(LEG_NAMES):
+        x, y, z = (float(v) for v in sim.foot_pos[i])
+        ground = backend.terrain_height(x, y)
+        gap = z - ground
+        if gap < -INITIAL_STATE_TOL["foot_penetration_m"]:
+            raise AssertionError(
+                f"reset(): foot {name} starts {-gap * 1000:.1f} mm inside the "
+                f"terrain at ({x:.3f}, {y:.3f}) -- foot_z={z:.4f}, terrain={ground:.4f}"
+            )
+        if gap > INITIAL_STATE_TOL["foot_gap_m"]:
+            raise AssertionError(
+                f"reset(): foot {name} starts {gap * 1000:.1f} mm above the "
+                f"terrain at ({x:.3f}, {y:.3f}) -- foot_z={z:.4f}, terrain={ground:.4f}"
             )
 
 
@@ -101,6 +163,7 @@ def run_experiment(
     u = geom.nominal_command()
 
     sim = backend.reset()
+    _assert_sane_initial_state(sim, geom, backend)
     last_state = "INIT"
     try:
         for k in range(n_steps):

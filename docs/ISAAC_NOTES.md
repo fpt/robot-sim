@@ -200,3 +200,32 @@ Isaac Sim 6.0, so those assumptions are unconfirmed against the new API.
 `scripts/isaac_preflight.py` is what checks them; run it before trusting the
 backend, and expect to fix at least the version comment even if every name
 still resolves.
+
+**`scripts/isaac_preflight.py` now reports 8/8 on this host.** The version
+jump did break three of its checked assumptions, each fixed one at a time the
+way this file asks for -- URDF importer 3.0's "Geometry"-scoped, kinematically
+nested link layout (sensor `prim_path`s), `activate_contact_sensors` stopping
+at the first `RigidBodyAPI` it finds instead of descending into an
+articulation's own nested links, and Isaac Lab 3.0's `Imu` needing one
+`update()` call before its first `.data` read. Commit `148e2d6` has the
+detail comments; PR #1.
+
+**A second, more consequential bug surfaced only once a real experiment ran
+end to end, not just the preflight's 100 raw physics steps**: `runner.py`
+called `backend.close()` before writing the run's log and summary.  On mock
+that is a no-op, so it was invisible; on Isaac, `SimulationApp.close()` runs
+with `fastShutdown=True` by default and hard-terminates the OS process
+instead of returning to Python.  `01_stand --backend isaaclab --eval`
+reported exit 0 and printed nothing wrong, but its log directory was created
+and empty -- every result silently discarded.  Fixed by moving
+`backend.close()` to strictly the last line of `run_experiment()`, made
+conditional (`close_backend`) so `cli.py`'s `--eval` and `--repeat` do not
+trip the same thing by doing more work in the same process afterward.  If a
+future Isaac run reports success with a suspiciously empty or missing log
+directory, this is the first thing to check.
+
+With both fixed, `01_stand --backend isaaclab --duration 5 --eval` runs the
+full pipeline and produces a real (if failing) evaluation -- see
+docs/FINDINGS.md #15 for the result: it stands on mock, falls over on real
+Isaac physics.  That is the actual next problem to chase, not an environment
+one.

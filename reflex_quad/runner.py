@@ -65,6 +65,7 @@ def run_experiment(
     fidelity: int | None = None,
     tag: str = "",
     progress: bool = True,
+    close_backend: bool = True,
 ) -> Path:
     cfg: Config = load_experiment(exp_id)
     if seed is not None:
@@ -146,8 +147,11 @@ def run_experiment(
             if progress and n_steps > 1000 and k % (n_steps // 10) == 0:
                 pct = 100 * k // n_steps
                 print(f"  [{exp_id}] {pct:3d}%  t={t:6.2f}s  state={last_state}", flush=True)
-    finally:
+    except Exception:
+        # best-effort cleanup on a failed run; see the note below on why this
+        # cannot be a blanket `finally` around the loop.
         backend.close()
+        raise
 
     summary = {
         "duration": float(cfg["duration"]),
@@ -165,6 +169,22 @@ def run_experiment(
         summary["aborted_reason"] = controller.aborted_reason
     run_dir = logger.close(summary)
     print(f"  -> {run_dir}")
+    # backend.close(), if called at all, must be the last thing this function
+    # does. On Isaac, SimulationApp.close() runs with fastShutdown=True
+    # (Isaac's own default) and hard-terminates the OS process instead of
+    # returning to Python -- a run reported exit 0, the logger's directory
+    # existed, and it was empty. `mock`'s close() is a no-op so this never
+    # showed up against it; found by running the isaaclab backend for real,
+    # see docs/FINDINGS.md.
+    #
+    # close_backend=False exists for exactly this reason: cli.py's --eval
+    # reads run_dir off disk in the *same process* after this call returns,
+    # and --repeat reuses the one `ensure_app()` Kit instance across
+    # iterations -- either would die here on Isaac if we closed. The process
+    # is short-lived either way, so skipping the close and letting the OS
+    # reclaim the GPU/Kit resources at exit is the simpler correct choice.
+    if close_backend:
+        backend.close()
     return run_dir
 
 

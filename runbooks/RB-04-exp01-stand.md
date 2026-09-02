@@ -13,10 +13,16 @@ nothing downstream means anything.
 # mock first, always
 .venv/bin/python -m reflex_quad 01_stand --backend mock --eval
 
-# then Isaac
-source ~/robotics/env_isaaclab/bin/activate
-python -m reflex_quad 01_stand --backend isaaclab --eval
+# then Isaac -- env vars per docs/ISAAC_NOTES.md's host-specific fixes
+OMNI_KIT_ACCEPT_EULA=YES LD_LIBRARY_PATH=~/robotics/compat-libs \
+  ~/robotics/env_isaaclab/bin/python -m reflex_quad 01_stand --backend isaaclab --eval
 ```
+
+**Status, this host, 2026-09-02**: mock `[PASS]`, Isaac `[FAIL]` -- the robot
+falls over on real physics.  Not a pipeline problem: `--eval` and the run
+directory both work correctly now (see docs/FINDINGS.md #15 for the numbers
+and why the mock backend could never have caught this).  Root cause not yet
+found; see the candidates listed there before re-running the same thing twice.
 
 ## Pass criteria
 

@@ -48,6 +48,12 @@ def main(argv: list[str] | None = None) -> int:
             args.experiment, log_root=args.log_root, seed=seed, duration=args.duration,
             backend_name=args.backend, fidelity=args.fidelity, tag=tag,
             progress=not args.quiet,
+            # Isaac's backend.close() can hard-terminate the process (see the
+            # comment in runner.py); this process exits right after main()
+            # regardless, on its own or after --eval below, so there is
+            # nothing to gain from an explicit close here and real risk of
+            # cutting --eval or a later --repeat iteration short.
+            close_backend=False,
         )
         if args.eval:
             from eval.cli import main as eval_main

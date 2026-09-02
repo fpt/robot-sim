@@ -1,15 +1,20 @@
-"""Isaac Sim 5.1 / Isaac Lab backend.
+"""Isaac Sim 6.0 / Isaac Lab backend.
 
 This is the backend the project actually cares about; `mock` exists so that
 everything around it can be built and tested without a GPU.  The two are
 interchangeable: same `SimBackend` interface, same servo model, same sensors,
 same controller, same logs.
 
-Written against the Isaac Lab 2.x API that ships with Isaac Sim 5.1.  Every
-assumption about an attribute name is marked `# VERIFY` and is checked one at a
-time by `scripts/isaac_preflight.py`, which is step 4 of runbooks/RB-03.  Run
-that before the first experiment: it fails fast and tells you which name moved,
-instead of a run dying twenty minutes in.
+Originally written against the Isaac Lab 2.x API that ships with Isaac Sim
+5.1; moved to Isaac Lab 3.0.0 (main) / Isaac Sim 6.0.1.0 on 2026-09-02 because
+Isaac Sim 5.1's RTX renderer crashes outright on NVIDIA driver 610.x, which
+this project's GPU also needs for other work -- see docs/ISAAC_NOTES.md for
+the root-cause chase. `scripts/isaac_preflight.py`'s scene check caught one
+real API-surface change from that jump (the URDF importer's link layout,
+fixed below); every remaining assumption about an attribute name is marked
+`# VERIFY` and is checked one at a time by that script, which is step 4 of
+runbooks/RB-03.  Run it before the first experiment: it fails fast and tells
+you which name moved, instead of a run dying twenty minutes in.
 
 Design notes:
   * The articulation is driven by *effort*, not position.  The servo model in
@@ -63,6 +68,16 @@ class IsaacLabBackend:
                 rigid_props=sim_utils.RigidBodyPropertiesCfg(
                     disable_gravity=False, max_depenetration_velocity=1.0
                 ),
+                # Not `activate_contact_sensors=True` here: that sweep
+                # (isaaclab.sim.schemas.activate_contact_sensors) walks the prim
+                # tree and stops descending the instant it finds a RigidBodyAPI,
+                # on the assumption that rigid bodies never nest.  URDF importer
+                # 3.0's link-per-USD-parent layout (see the comment below) breaks
+                # that assumption: it stops at "body" -- itself a rigid body --
+                # and never reaches FL_upper/FL_lower/FL_foot underneath it, so
+                # every ContactSensor still fails "no bodies with contact
+                # reporter API".  Activated explicitly per foot below instead,
+                # after `Articulation(robot_cfg)` has spawned the prims.
                 articulation_props=sim_utils.ArticulationRootPropertiesCfg(
                     enabled_self_collisions=False, solver_position_iteration_count=8,
                     solver_velocity_iteration_count=1,
@@ -76,22 +91,39 @@ class IsaacLabBackend:
                 # stiffness/damping zero: our own servo model provides the loop
                 "all": ImplicitActuatorCfg(
                     joint_names_expr=[".*_hip", ".*_knee"],
-                    effort_limit=float(cfg["servo"]["limits"]["tau_max"]) * 3.0,
-                    velocity_limit=float(cfg["servo"]["limits"]["qd_max"]) * 3.0,
+                    # *_limit_sim, not *_limit: Isaac Lab 3.0 deprecated the
+                    # unsuffixed fields for implicit actuators (still accepted,
+                    # but warns on every run) in favor of these.
+                    effort_limit_sim=float(cfg["servo"]["limits"]["tau_max"]) * 3.0,
+                    velocity_limit_sim=float(cfg["servo"]["limits"]["qd_max"]) * 3.0,
                     stiffness=0.0, damping=0.0,
                 ),
             },
         )
         self.robot = Articulation(robot_cfg)
 
-        self.body_imu = Imu(ImuCfg(prim_path="/World/Robot/body", update_period=0.0))
+        # URDF importer 3.0 (Isaac Sim 6.0 / Isaac Lab 3.0) runs an asset-transformer
+        # pass by default that re-authors the converted USD into a layered asset:
+        # links move under a "Geometry" scope, nested by the URDF's own kinematic
+        # tree, instead of sitting flat under the articulation root as they did on
+        # Isaac Sim 5.1.  `scripts/isaac_preflight.py`'s scene check caught this --
+        # a sensor prim_path of "/World/Robot/{n}_foot" no longer resolves.  See
+        # docs/ISAAC_NOTES.md.  Feet are nested body/{n}_upper/{n}_lower/{n}_foot
+        # because that is the URDF's own link chain (asset_builder.py); this is
+        # derived from our URDF, not a guess at Isaac's naming.
+        from isaaclab.sim.schemas import activate_contact_sensors
+
+        for n in LEG_NAMES:
+            activate_contact_sensors(self._foot_prim_path(n))
+
+        self.body_imu = Imu(ImuCfg(prim_path="/World/Robot/Geometry/body", update_period=0.0))
         self.foot_imus = [
-            Imu(ImuCfg(prim_path=f"/World/Robot/{n}_foot", update_period=0.0))
+            Imu(ImuCfg(prim_path=self._foot_prim_path(n), update_period=0.0))
             for n in LEG_NAMES
         ]
         self.foot_contacts = [
             ContactSensor(ContactSensorCfg(
-                prim_path=f"/World/Robot/{n}_foot", update_period=0.0, history_length=0,
+                prim_path=self._foot_prim_path(n), update_period=0.0, history_length=0,
             ))
             for n in LEG_NAMES
         ]
@@ -118,12 +150,25 @@ class IsaacLabBackend:
         converter = UrdfConverter(UrdfConverterCfg(   # VERIFY: cfg field names
             asset_path=str(urdf.resolve()),
             usd_dir=str(out_dir.resolve()),
-            usd_file_name="reflex_quad.usd",
+            # no usd_file_name: URDF importer 3.0's UrdfConverter.__init__ always
+            # overrides it to "{urdf_stem}/{urdf_stem}.usda" and ignores what is
+            # passed here -- setting it was a silent no-op on Isaac Lab 3.0.
             fix_base=False,
             merge_fixed_joints=False,      # keep the foot links: sensors attach there
             force_usd_conversion=bool(isaac_cfg.get("force_convert", False)),
         ))
         return converter.usd_path
+
+    @staticmethod
+    def _foot_prim_path(leg: str) -> str:
+        """Path to a foot link under the articulation root.
+
+        URDF importer 3.0 nests links by the URDF's own kinematic chain under a
+        "Geometry" scope (see the comment in __init__) rather than laying them
+        flat; each leg's foot is body/{leg}_upper/{leg}_lower/{leg}_foot because
+        that is the parent chain asset_builder.py writes into the URDF.
+        """
+        return f"/World/Robot/Geometry/body/{leg}_upper/{leg}_lower/{leg}_foot"
 
     def _build_scene(self, sim_utils, isaac_cfg: dict) -> None:
         sim_utils.GroundPlaneCfg().func("/World/ground", sim_utils.GroundPlaneCfg())
@@ -159,6 +204,13 @@ class IsaacLabBackend:
         self.robot.reset()
         self.sim.reset()
         self.t = 0.0
+        # Isaac Lab 3.0's Imu sets self._dt only inside update(dt); state() below
+        # reads .data on each IMU, which lazily recomputes on first access with
+        # no update() ever having run yet, raising AttributeError on _dt.  step()
+        # always calls update() before state(), so this only bites the very
+        # first frame -- prime it here the same way.
+        for s in [self.body_imu] + self.foot_imus + self.foot_contacts:
+            s.update(self.dt)
         return self.state()
 
     def step(self, tau: np.ndarray) -> SimState:

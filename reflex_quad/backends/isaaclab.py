@@ -84,7 +84,7 @@ class IsaacLabBackend:
                 ),
             ),
             init_state=ArticulationCfg.InitialStateCfg(
-                pos=(0.0, 0.0, float(cfg["robot"]["stance"]["height"]) + 0.02),
+                pos=(0.0, 0.0, self._spawn_height()),  # see _spawn_height()
                 joint_pos=self._initial_joint_pos(),
             ),
             actuators={
@@ -188,6 +188,27 @@ class IsaacLabBackend:
     def _initial_joint_pos(self) -> dict[str, float]:
         u0 = self.geom.nominal_command()
         return {name: float(u0[i]) for i, name in enumerate(JOINT_NAMES)}
+
+    def _spawn_height(self) -> float:
+        """Body z at spawn: clear of the tallest terrain under any nominal foot.
+
+        Mirrors MockBackend.reset()'s convention (`z = max(ground + ext) +
+        margin`) rather than mock's own fixed 0.02 m constant, which assumed
+        flat ground and put the feet 15 mm into a 20 mm terrain block on
+        02_uneven_ground -- caught by runner.py's _assert_sane_initial_state,
+        see docs/FINDINGS.md #15.  `+ body.height / 2` accounts for the URDF
+        mounting each hip that far below the body link's own origin
+        (asset_builder.py), which the reduced-order mock model has no term
+        for at all (hip_z == body_z there).
+        """
+        q0, q1 = self.geom.nominal_command()[0:2]  # same angles on all 4 legs
+        ext = self.geom.leg_extension(q0, q1)
+        fx, _ = self.geom.foot_offset(q0, q1)
+        ground = max(
+            self.terrain_height(hx + fx, hy)
+            for hx, hy in self.geom.hip_xy
+        )
+        return ground + ext + float(self.cfg["robot"]["body"]["height"]) / 2.0 + 0.005
 
     def _build_joint_index(self) -> np.ndarray:
         """Map our fixed joint order onto Isaac's."""

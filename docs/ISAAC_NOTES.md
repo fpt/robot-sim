@@ -224,8 +224,24 @@ trip the same thing by doing more work in the same process afterward.  If a
 future Isaac run reports success with a suspiciously empty or missing log
 directory, this is the first thing to check.
 
-With both fixed, `01_stand --backend isaaclab --duration 5 --eval` runs the
-full pipeline and produces a real (if failing) evaluation -- see
-docs/FINDINGS.md #15 for the result: it stands on mock, falls over on real
-Isaac physics.  That is the actual next problem to chase, not an environment
-one.
+With both fixed, `01_stand --backend isaaclab --duration 5 --eval` ran the
+full pipeline and produced a real evaluation -- but it failed: stood on mock,
+fell over on real Isaac physics.  That looked like the actual next problem to
+chase, not an environment one, and briefly was treated as one.
+
+**It was still an environment bug.** `IsaacLabBackend.reset()` called
+`self.robot.reset()` then `self.sim.reset()`, on the assumption that
+`ArticulationCfg(init_state=...)` was already in effect once the object
+existed. `Articulation.reset()` only resets actuator-internal state (delay
+queues); it never re-applies `init_state`. Isaac Lab's convention is that the
+caller writes the default root pose/velocity and joint position/velocity
+back into sim explicitly after `sim.reset()` -- this backend never did, so
+every Isaac run spawned the robot at the URDF's raw rest pose (straight legs)
+instead of `nominal_command()`'s crouch, with the feet already ~4 cm into the
+ground. Fixed by adding the four `write_*_to_sim_index` calls from
+`robot.data.default_*` between `sim.reset()` and `robot.reset()`.
+`01_stand` now passes all 10 checks on Isaac, matching the mock's numbers.
+Full account and the diagnostic trail (truth.csv showing q staying at ~0 and
+tau pinned at `servo.limits.tau_max`) is docs/FINDINGS.md #15 -- read that
+before trusting any other "it falls over on Isaac" result; check `q` at
+`t=0` against `nominal_command()` first.

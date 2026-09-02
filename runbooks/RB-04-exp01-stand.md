@@ -18,11 +18,12 @@ OMNI_KIT_ACCEPT_EULA=YES LD_LIBRARY_PATH=~/robotics/compat-libs \
   ~/robotics/env_isaaclab/bin/python -m reflex_quad 01_stand --backend isaaclab --eval
 ```
 
-**Status, this host, 2026-09-02**: mock `[PASS]`, Isaac `[FAIL]` -- the robot
-falls over on real physics.  Not a pipeline problem: `--eval` and the run
-directory both work correctly now (see docs/FINDINGS.md #15 for the numbers
-and why the mock backend could never have caught this).  Root cause not yet
-found; see the candidates listed there before re-running the same thing twice.
+**Status, this host, 2026-09-02**: mock `[PASS]`, Isaac `[PASS]`, all 10
+checks.  It fell over before (docs/FINDINGS.md #15) because
+`IsaacLabBackend.reset()` never re-applied `init_state` after `sim.reset()`,
+so the robot spawned at the URDF's raw rest pose (straight legs, ~4 cm of
+foot penetration) instead of `nominal_command()`'s crouch -- fixed there, not
+here; nothing in this runbook needed to change.
 
 ## Pass criteria
 

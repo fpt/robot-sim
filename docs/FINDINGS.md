@@ -233,21 +233,10 @@ degrees and near-zero mean contact force say the robot is on its side or back
 by the end of the window, not standing with a large tilt -- `fell_over`
 (tilt > 45 deg) trips well before `diverged` (tilt > 60 deg) does.
 
-**Not yet root-caused.** Candidates, in the order they'd be cheapest to check:
-gains tuned against the mock's reduced-order (heave/roll/pitch only, no
-horizontal freedom) dynamics not holding once the body can actually translate
-and yaw; the effort-driven joints (section on "why the servo is ours" in
-`docs/ISAAC_NOTES.md`) behaving differently from mock's second-order joint
-model under real link inertia and self-contact; or the initial spawn height
-(`stance.height + 0.02`) putting the feet in penetration or free-fall against
-PhysX's actual collision geometry in a way the mock's unilateral spring-damper
-foot never has to resolve. Whichever it is, this is the first concrete number
-this project has for the gap `docs/MOCK_BACKEND.md` always said would be
-there -- log it against the fix, not against a v2 of this finding.
-
-**Confirmed downstream, not a fluke of one run** (2026-09-02, same session):
-`02_uneven_ground` and `03_dither` both fail the same way on `isaaclab`, as
-RB-04 warns they would ("if this fails, nothing downstream means anything").
+**Confirmed downstream before the fix, not a fluke of one run** (2026-09-02,
+same session): `02_uneven_ground` and `03_dither` both failed the same way on
+`isaaclab`, as RB-04 warns they would ("if this fails, nothing downstream
+means anything").
 
 ```
 02_uneven_ground  [FAIL]  final_abs_roll_deg=643.3  final_abs_pitch_deg=614.1
@@ -255,10 +244,64 @@ RB-04 warns they would ("if this fails, nothing downstream means anything").
 03_dither         [FAIL]  final_abs_roll_deg=199.8  final_abs_pitch_deg=149
 ```
 
-`02`'s roll/pitch past 360 degrees means it is not one fall and rest -- the
-body keeps tumbling for the whole 15 s window, unlike `01`'s single topple.
-Worth noting for whoever chases this: `03_dither`'s `j_decreases` check still
-**passes** (Mann-Kendall p = 1.1e-55) while the robot is down and `no_fall`
-fails -- `J`'s pose and force terms both legitimately shrink once a fallen
-body stops moving, so a passing `j_decreases` on Isaac is not by itself
-evidence the dither search is doing anything; check `no_fall` first.
+`02`'s roll/pitch past 360 degrees meant it was not one fall and rest -- the
+body kept tumbling for the whole 15 s window, unlike `01`'s single topple.
+Worth noting for whoever hits something like this again: `03_dither`'s
+`j_decreases` check still **passed** (Mann-Kendall p = 1.1e-55) while the
+robot was down and `no_fall` failed -- `J`'s pose and force terms both
+legitimately shrink once a fallen body stops moving, so a passing
+`j_decreases` on Isaac is not by itself evidence the dither search is doing
+anything; check `no_fall` first.
+
+**Root cause found and fixed, same day.** Not the servo, not mass/CoM, not
+mock-tuned gains not transferring -- the robot was never spawning in
+`nominal_command()`'s pose at all. `truth.csv` at `t=0` showed every joint at
+~0 rad (URDF's raw rest pose: hip straight down, knee straight) instead of
+the commanded -41.4/82.8 deg crouch, and `tau_*_knee` pinned at exactly
+`-1.6` (`servo.limits.tau_max`) from the first tick -- the servo trying, and
+failing, to snap a straight leg to a bent one against a real 3D body it
+cannot fully support from that pose. A straight leg (`q0=q1=0`) also reaches
+0.24 m (`l1+l2`), but the body was only spawned `stance.height + 0.02 = 0.20`
+m up, so the feet started ~4 cm *into* the ground; the "launch" in the
+original trace (`body_z` 0.218 -> 0.395 m in 0.19 s) was PhysX's
+depenetration solver firing on that overlap, not a fall.
+
+The bug: `IsaacLabBackend.reset()` called `self.robot.reset()` then
+`self.sim.reset()`, expecting `ArticulationCfg(init_state=...)` to already be
+in effect. `Articulation.reset()` only resets actuator-internal state (delay
+queues); it never re-applies `init_state`. Isaac Lab's own convention is that
+whoever calls `reset()` must explicitly write the default root pose/velocity
+and joint position/velocity back into the sim afterward
+(`write_root_pose_to_sim_index`, `write_joint_position_to_sim_index`, etc.,
+from `robot.data.default_*`) -- this project's backend never did, so every
+Isaac run started from the raw USD pose regardless of `init_state`.
+
+Fixed in `IsaacLabBackend.reset()`: `sim.reset()` first, then the four
+`write_*_to_sim_index` calls from `robot.data.default_*`, then
+`robot.reset()`.  Result, same config, same host:
+
+```
+01_stand           [PASS]  all 10 checks, total_force_mean_N=14.32,
+                            final_abs_roll_deg=0.033, final_abs_pitch_deg=0.69
+02_uneven_ground    [FAIL]  9/10 -- only level_roll misses, 4.59 deg (need <= 3)
+                            no_fall/no_divergence both pass, roll_improvement_ratio=2.95
+```
+
+```
+03_dither           [FAIL]  6/11 -- no_fall/no_divergence pass, stands at
+                             final_abs_roll_deg=0.37, final_abs_pitch_deg=0.30
+                             j_improvement=6.72 (need >= 1.5) passes strongly
+                             j_decreases p=0.95, gradient_consistent=0.56 fail
+```
+
+`01_stand` matches the mock's numbers closely. `02_uneven_ground` and
+`03_dither` are now genuine, small-margin tuning questions, not instability --
+which is the state this project's Isaac work was always supposed to reach.
+`02`'s miss (`level_roll`) is RB-05's own "Tuning, if Isaac disagrees" section
+(`k_force_twist`/`k_roll`). `03`'s misses are exactly what RB-06 already warns
+about ("Read `docs/FINDINGS.md` #2 and #3 first; the probe parameters were
+tuned against the mock backend and Isaac's contact noise will be different")
+-- `j_improvement` passing by 4x the threshold while the trend/consistency
+checks fail says the search is finding a real direction and moving, just not
+as cleanly as the mock's lower-noise contact model let it; `delta` and
+`repeats` are the first two knobs to try, per RB-06.

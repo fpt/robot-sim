@@ -305,3 +305,43 @@ tuned against the mock backend and Isaac's contact noise will be different")
 checks fail says the search is finding a real direction and moving, just not
 as cleanly as the mock's lower-noise contact model let it; `delta` and
 `repeats` are the first two knobs to try, per RB-06.
+
+**A second, smaller spawn bug, caught immediately instead of by more
+tumbling.** With the `reset()` fix above, `runner.py` now runs
+`_assert_sane_initial_state(sim, geom, backend)` right after every
+`backend.reset()` -- checks `q` is finite, within its joint limits, and
+within `0.01` rad of `nominal_command()`, and that every foot is within a few
+cm of the terrain height under it, on *any* backend, since it only reads what
+`SimState` already returns. First real use, on `isaaclab`, immediately caught
+a second bug the eval criteria alone had let through as a `[PASS]`: `q` was
+now correct, but `foot_z` was still 10 mm inside flat ground.
+`IsaacLabBackend`'s spawn height was `stance.height + 0.02`, a constant
+carried over from before the `reset()` fix and never revisited -- it assumes
+`hip_z == body_z`, true in the mock's reduced-order model but not in the real
+URDF, which mounts each hip `body.height / 2` (30 mm) below the body link's
+own origin (`asset_builder.py`). On `02_uneven_ground` the same formula was
+worse -- 15 mm into the 20 mm block -- because it doesn't look at terrain at
+all, unlike `MockBackend.reset()`'s own `z = max(ground + ext) + margin`.
+Fixed with a `_spawn_height()` method that does the same max-over-feet
+terrain lookup mock does, plus the real hip offset. Both are one-line-cause,
+easy-to-miss-by-eye bugs that a criteria-only `[PASS]` does not surface --
+`02_uneven_ground`'s `total_force_mean_N=14.35` and `no_fall`/`no_divergence`
+both passing, reported earlier in this entry, were **already** on top of the
+15 mm foot penetration; the eval numbers alone gave no reason to suspect it.
+Final numbers, clean spawn confirmed by the check on all three:
+
+```
+01_stand           [PASS]  all 10 checks (unchanged by this fix)
+02_uneven_ground    9/10   level_roll now passes (1.42 vs 4.59 deg before);
+                           level_pitch/improved_roll now the narrow misses
+                           (3.65 vs <=3, 1.88 vs >=2.0) -- still tuning, not
+                           instability, just a different close margin
+03_dither           6/11   unchanged in shape: stands (roll 0.53, pitch 0.09),
+                           j_improvement=3.99 passes, trend checks still miss
+```
+
+The lesson for next time this project touches a backend's `reset()`: check
+`q` and foot placement against the model at `t=0`, in code, not by reading a
+criteria table. A passing `contact_sane`/`no_fall` measures the robot's state
+several seconds in, after the servo has had time to (mostly) recover from a
+bad spawn -- it does not mean the spawn was clean.

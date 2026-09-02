@@ -201,8 +201,20 @@ class IsaacLabBackend:
 
     # -- SimBackend ------------------------------------------------------
     def reset(self) -> SimState:
-        self.robot.reset()
+        # Articulation.reset() only resets actuator-internal state (delay
+        # queues etc.) -- it does NOT re-apply init_state.  Isaac Lab's own
+        # convention is to write the default root/joint state back to sim
+        # explicitly after sim.reset(); skipping this left the articulation
+        # at its raw USD rest pose (all-zero joint angles) instead of
+        # nominal_command(), a ~4 cm foot penetration at spawn that showed up
+        # as a violent depenetration launch and permanent tumble -- see
+        # docs/FINDINGS.md #15.
         self.sim.reset()
+        self.robot.write_root_pose_to_sim_index(root_pose=self.robot.data.default_root_pose)
+        self.robot.write_root_velocity_to_sim_index(root_velocity=self.robot.data.default_root_vel)
+        self.robot.write_joint_position_to_sim_index(position=self.robot.data.default_joint_pos)
+        self.robot.write_joint_velocity_to_sim_index(velocity=self.robot.data.default_joint_vel)
+        self.robot.reset()
         self.t = 0.0
         # Isaac Lab 3.0's Imu sets self._dt only inside update(dt); state() below
         # reads .data on each IMU, which lazily recomputes on first access with
